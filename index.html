@@ -553,8 +553,12 @@ function setState(s){
    conversations, restarts after.
    ========================================================= */
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-let wakeRec=null, wakeRunning=false, wakeWanted=false;
+let wakeRec=null, wakeRunning=false, wakeWanted=false, wakeTimer=null;
 
+function scheduleWake(ms){            /* dedupes restart attempts */
+  clearTimeout(wakeTimer);
+  wakeTimer=setTimeout(startWake,ms||400);
+}
 function wakeMatch(text){
   const t=text.toLowerCase();
   return cfg.wakeWords.some(w=>{
@@ -564,7 +568,8 @@ function wakeMatch(text){
   });
 }
 function startWake(){
-  if(!SR||!wakeWanted||wakeRunning||conversationActive)return;
+  if(!SR||!wakeWanted||conversationActive||wakeRunning)return;
+  try{wakeRec&&wakeRec.abort();}catch(e){}  /* kill any zombie before making a new one */
   wakeRec=new SR();
   wakeRec.lang=cfg.lang;
   wakeRec.continuous=true;
@@ -580,16 +585,18 @@ function startWake(){
   };
   wakeRec.onerror=ev=>{
     wakeRunning=false;
-    if(ev.error==='not-allowed'){wakeWanted=false;store.set('wake_on','0');toast('Microphone access was blocked.');updateWakeBtn();}
+    if(ev.error==='not-allowed'){wakeWanted=false;store.set('wake_on','0');toast('Microphone access was blocked.');}
   };
   wakeRec.onend=()=>{
     wakeRunning=false;
-    /* Chrome ends continuous sessions periodically — restart */
-    if(wakeWanted&&!conversationActive)setTimeout(startWake,400);
+    /* Chrome ends continuous sessions periodically — restart (deduped) */
+    if(wakeWanted&&!conversationActive)scheduleWake(500);
   };
-  try{wakeRec.start();wakeRunning=true;}catch(e){wakeRunning=false;setTimeout(startWake,400);}
+  try{wakeRec.start();wakeRunning=true;}
+  catch(e){wakeRunning=false;scheduleWake(500);}
 }
 function stopWake(){
+  clearTimeout(wakeTimer);
   wakeRunning=false;
   try{wakeRec&&wakeRec.abort();}catch(e){}
 }
@@ -702,7 +709,7 @@ function endConversation(){
   setState('idle');
 
   render();
-  if(wakeWanted)setTimeout(startWake,600);
+  if(wakeWanted)scheduleWake(600);
 }
 
 /* ========= brain ========= */
