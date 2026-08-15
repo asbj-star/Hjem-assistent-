@@ -630,6 +630,7 @@ function listenOnce(){
   recog.start();
 }
 function endConversation(){
+  genId++; /* invalidates any in-flight stream + audio queue */
   try{recog&&recog.abort();}catch(e){}
   window.speechSynthesis&&speechSynthesis.cancel();
   try{if(currentAudio){currentAudio.pause();currentAudio=null;}}catch(e){}
@@ -686,153 +687,224 @@ async function ask(question){
     headers['anthropic-dangerous-direct-browser-access']='true';
     model=cfg.model;
   }
-  try{
-    const res=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',headers,
-      body:JSON.stringify({model,max_tokens:1000,system:sys,messages:history})
-    });
-    const data=await res.json();
-    if(data.error)throw new Error(data.error.message||'API error');
-    let text=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n').trim();
-    if(!text)throw new Error('Empty reply');
-    let weatherTriggered=false;
-    /* strip any leading [THEME:x] / [WAVES:on|off] tokens, in any order/count */
-    let strippedSomething=true;
-    while(strippedSomething){
-      strippedSomething=false;
-      const themeMatch=text.match(/^\[THEME:([a-z0-9]+)\]\s*/i);
-      if(themeMatch){
-        text=text.slice(themeMatch[0].length);
-        applyTheme(themeMatch[1].toLowerCase());
-        strippedSomething=true;
-      }
-      const wavesMatch=text.match(/^\[WAVES:(on|off)\]\s*/i);
-      if(wavesMatch){
-        text=text.slice(wavesMatch[0].length);
-        applyWaves(wavesMatch[1].toLowerCase()==='on');
-        strippedSomething=true;
-      }
-    }
-    text=text.trim();
-    /* music tokens — may need to override the spoken reply on failure */
-    let musicError='';
-    const playMatch=text.match(/^\[PLAY:([^\]]+)\]\s*/i);
-    if(playMatch){
-      text=text.slice(playMatch[0].length).trim();
-      musicError=await spotifyPlayRequest(playMatch[1].trim(),'track');
-    }
-    const plMatch=text.match(/^\[PLAYLIST:([^\]]+)\]\s*/i);
-    if(plMatch){
-      text=text.slice(plMatch[0].length).trim();
-      musicError=await spotifyPlayRequest(plMatch[1].trim(),'playlist');
-    }
-    const mcMatch=text.match(/^\[MUSIC:(pause|resume|next|prev)\]\s*/i);
-    if(mcMatch){
-      text=text.slice(mcMatch[0].length).trim();
-      musicError=await spotifySimpleCommand(mcMatch[1].toLowerCase());
-    }
-    if(musicError)text=musicError;
-    if(text.startsWith('[WEATHER]')){text=text.slice(9).trim();weatherTriggered=true;}
-    history.push({role:'assistant',content:text});
-    speak(text,question,weatherTriggered);
-  }catch(err){
-    console.error(err);toast('Claude API: '+err.message);endConversation();
-  }
+  await streamAsk(sys,headers,model);
 }
 
-/* ========= voice out ========= */
+/* =========================================================
+   STREAMING PIPELINE — speak while Claude is still writing.
+   The reply streams in; leading [TOKENS] execute the moment they
+   complete; text is cut into sentences; each sentence goes to
+   ElevenLabs immediately (fetches overlap playback) and audio
+   plays strictly in order. ElevenLabs-only when a key is set —
+   failures show a toast instead of falling back.
+   ========================================================= */
 let voices=[];
 function loadVoices(){voices=speechSynthesis.getVoices();}
 if('speechSynthesis' in window){loadVoices();speechSynthesis.onvoiceschanged=loadVoices;}
-function speak(text,question,weatherTriggered){
-  setState('speaking');
-  if(weatherTriggered){
-    /* switch to weather page while Claude confirms out loud */
-    conversationActive=false;
-    showWeatherPage();
-    render();
-  }
-  const done=()=>{
-    if(weatherTriggered){endConversation();}
-    else followUp();
+let audioCtx=null,currentAudio=null,genId=0;
+
+async function streamAsk(sys,headers,model){
+  const myGen=++genId;
+  const q=[];                 /* ordered sentence queue with per-item prefetch */
+  let playing=false,streamDone=false,finished=false;
+  let weatherTriggered=false,buffer='',leading=true,spoken='';
+  let musicGate=null,suppressText=false;
+
+  const finishIfDone=()=>{
+    if(finished||!streamDone||playing||q.length)return;
+    if(myGen!==genId)return;
+    finished=true;
+    history.push({role:'assistant',content:spoken.trim()||'OK'});
+    if(weatherTriggered)endConversation();
+    else if(spoken.trim())followUp();
+    else endConversation();
   };
-  if(cfg.elKey){
-    speakEleven(text,done).catch(()=>speakBrowser(text,done));
-  }else{
-    speakBrowser(text,done);
+
+  const enqueue=(t)=>{
+    t=t.trim();
+    if(!t||suppressText)return;
+    spoken+=(spoken?' ':'')+t;
+    const item={text:t};
+    if(cfg.elKey)item.blobP=elevenFetch(t);   /* prefetch immediately */
+    q.push(item);
+    pump();
+  };
+
+  const pump=async()=>{
+    if(playing)return;playing=true;
+    while(q.length){
+      if(myGen!==genId){playing=false;return;}
+      if(musicGate){
+        const err=await musicGate;musicGate=null;
+        if(err){ /* command failed — speak the error instead of the confirmation */
+          q.length=0;suppressText=true;spoken=err;
+          await speakChunk({text:err,blobP:cfg.elKey?elevenFetch(err):null},myGen);
+          break;
+        }
+      }
+      const item=q.shift();
+      await speakChunk(item,myGen);
+    }
+    playing=false;
+    finishIfDone();
+  };
+
+  const handleDelta=(t)=>{
+    buffer+=t;
+    while(leading){
+      buffer=buffer.replace(/^\s+/,'');
+      if(!buffer.startsWith('[')){if(buffer)leading=false;break;}
+      const close=buffer.indexOf(']');
+      if(close===-1)return;                    /* token not complete yet */
+      const tok=buffer.slice(0,close+1);let m;
+      if(m=tok.match(/^\[THEME:([a-z0-9]+)\]$/i))applyTheme(m[1].toLowerCase());
+      else if(m=tok.match(/^\[WAVES:(on|off)\]$/i))applyWaves(m[1].toLowerCase()==='on');
+      else if(/^\[WEATHER\]$/i.test(tok)){weatherTriggered=true;conversationActive=false;showWeatherPage();render();}
+      else if(m=tok.match(/^\[PLAY:([^\]]+)\]$/i))musicGate=spotifyPlayRequest(m[1].trim(),'track');
+      else if(m=tok.match(/^\[PLAYLIST:([^\]]+)\]$/i))musicGate=spotifyPlayRequest(m[1].trim(),'playlist');
+      else if(m=tok.match(/^\[MUSIC:(pause|resume|next|prev)\]$/i))musicGate=spotifySimpleCommand(m[1].toLowerCase());
+      else{leading=false;break;}               /* unknown bracket — treat as text */
+      buffer=buffer.slice(close+1);
+    }
+    if(!leading){
+      let m;
+      while(m=buffer.match(/^([\s\S]{12,}?[.!?\u2026])\s/)){
+        enqueue(m[1]);
+        buffer=buffer.slice(m[0].length);
+      }
+    }
+  };
+
+  try{
+    const res=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',headers,
+      body:JSON.stringify({model,max_tokens:1000,stream:true,system:sys,messages:history})
+    });
+    if(!res.ok){
+      let msg='HTTP '+res.status;
+      try{const j=await res.json();msg=(j.error&&j.error.message)||msg;}catch(e){}
+      throw new Error(msg);
+    }
+    const reader=res.body.getReader();
+    const dec=new TextDecoder();
+    let sse='';
+    while(true){
+      const {done,value}=await reader.read();
+      if(done)break;
+      if(myGen!==genId)return;
+      sse+=dec.decode(value,{stream:true});
+      const lines=sse.split('\n');sse=lines.pop();
+      for(const line of lines){
+        if(!line.startsWith('data:'))continue;
+        const payload=line.slice(5).trim();
+        if(!payload)continue;
+        let ev;try{ev=JSON.parse(payload);}catch(e){continue;}
+        if(ev.type==='content_block_delta'&&ev.delta&&ev.delta.type==='text_delta')handleDelta(ev.delta.text);
+        if(ev.type==='error')throw new Error((ev.error&&ev.error.message)||'stream error');
+      }
+    }
+    /* flush the tail */
+    if(leading&&buffer.startsWith('['))buffer='';  /* incomplete token — drop */
+    leading=false;
+    if(buffer.trim())enqueue(buffer);
+    buffer='';
+    /* token-only reply (no text): resolve the command gate here */
+    if(musicGate&&!q.length&&!playing){
+      const err=await musicGate;musicGate=null;
+      if(err){spoken=err;await speakChunk({text:err,blobP:cfg.elKey?elevenFetch(err):null},myGen);}
+    }
+    streamDone=true;
+    finishIfDone();
+  }catch(err){
+    console.error(err);
+    if(myGen===genId){toast('Claude API: '+err.message);endConversation();}
   }
 }
 
-/* ---- ElevenLabs: realistic voice, mouth driven by real loudness ---- */
-let audioCtx=null,currentAudio=null;
-async function speakEleven(text,done){
-  const res=await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(cfg.elVoice)}?output_format=mp3_44100_64`,{
+/* ---- ElevenLabs fetch: returns a blob promise, errors surfaced ---- */
+function elevenFetch(text){
+  const p=fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(cfg.elVoice)}?output_format=mp3_44100_64`,{
     method:'POST',
     headers:{'xi-api-key':cfg.elKey,'Content-Type':'application/json'},
     body:JSON.stringify({text,model_id:'eleven_flash_v2_5'})
+  }).then(async res=>{
+    if(!res.ok){
+      let msg='HTTP '+res.status;
+      try{const j=await res.json();msg=(j.detail&&(j.detail.message||j.detail.status))||msg;}catch(e){}
+      throw new Error(msg);
+    }
+    return res.blob();
   });
-  if(!res.ok)throw new Error('ElevenLabs '+res.status); /* quota out / bad key → fallback */
-  const blob=await res.blob();
-  const audio=new Audio(URL.createObjectURL(blob));
-  currentAudio=audio;
-  try{
-    audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
-    if(audioCtx.state==='suspended')await audioCtx.resume();
-    const src=audioCtx.createMediaElementSource(audio);
-    const analyser=audioCtx.createAnalyser();
-    analyser.fftSize=256;
-    src.connect(analyser);analyser.connect(audioCtx.destination);
-    const buf=new Uint8Array(analyser.frequencyBinCount);
-    let meterRAF=null;
-    const meter=()=>{
-      analyser.getByteTimeDomainData(buf);
-      let sum=0;
-      for(let i=0;i<buf.length;i++){const d=(buf[i]-128)/128;sum+=d*d;}
-      const rms=Math.sqrt(sum/buf.length);       /* 0..~0.5 */
-      talkPulse(Math.min(1,rms*4));
-      meterRAF=requestAnimationFrame(meter);
-    };
-    audio.onplay=()=>{meterRAF=requestAnimationFrame(meter);};
-    const finish=()=>{if(meterRAF)cancelAnimationFrame(meterRAF);URL.revokeObjectURL(audio.src);done();};
-    audio.onended=finish;audio.onerror=finish;
-    await audio.play();
-  }catch(e){
-    /* analyser failed (autoplay policy etc) — play plainly with fallback cadence */
-    const t=setInterval(()=>talkPulse(0.4+Math.random()*0.5),260);
-    const finish=()=>{clearInterval(t);done();};
-    audio.onended=finish;audio.onerror=finish;
-    await audio.play();
+  p.catch(()=>{});    /* consumer re-awaits; this just silences unhandled-rejection noise */
+  return p;
+}
+
+async function speakChunk(item,myGen){
+  if(myGen!==genId)return;
+  if(state!=='speaking')setState('speaking');
+  if(cfg.elKey){
+    let blob;
+    try{blob=await item.blobP;}
+    catch(e){toast('ElevenLabs: '+e.message);return;}  /* no fallback by design */
+    if(myGen!==genId)return;
+    await playBlob(blob);
+  }else{
+    await speakBrowserChunk(item.text);
   }
 }
 
-/* ---- browser voice fallback ---- */
-function speakBrowser(text,done){
-  if(!('speechSynthesis' in window)){setTimeout(done,3500);return;}
-  speechSynthesis.cancel(); /* kill any overlapping/queued utterance */
-  const u=new SpeechSynthesisUtterance(text);
-  u.lang=cfg.lang;
-  u.voice=pickVoice();
-  u.rate=1.02;
-  /* real sync: pulse the mouth on every word boundary */
-  let gotBoundary=false, fallbackTimer=null;
-  u.onboundary=ev=>{
-    gotBoundary=true;
-    /* longer words open the mouth more */
-    const len=(ev.charLength||4);
-    talkPulse(0.45+Math.min(0.55,len*0.09));
-  };
-  u.onstart=()=>{
-    /* some voices never fire boundary events — fall back to a gentle
-       cadence after a short grace period */
-    fallbackTimer=setTimeout(()=>{
-      if(!gotBoundary){
-        fallbackTimer=setInterval(()=>talkPulse(0.4+Math.random()*0.5),260);
-      }
-    },600);
-  };
-  const finish=()=>{clearTimeout(fallbackTimer);clearInterval(fallbackTimer);done();};
-  u.onend=finish;u.onerror=finish;
-  speechSynthesis.speak(u);
+/* play one audio blob; mouth driven by live loudness */
+function playBlob(blob){
+  return new Promise(resolve=>{
+    const audio=new Audio(URL.createObjectURL(blob));
+    currentAudio=audio;
+    let meterRAF=null,cadence=null;
+    const finish=()=>{
+      if(meterRAF)cancelAnimationFrame(meterRAF);
+      if(cadence)clearInterval(cadence);
+      URL.revokeObjectURL(audio.src);
+      if(currentAudio===audio)currentAudio=null;
+      resolve();
+    };
+    try{
+      audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
+      if(audioCtx.state==='suspended')audioCtx.resume();
+      const src=audioCtx.createMediaElementSource(audio);
+      const analyser=audioCtx.createAnalyser();
+      analyser.fftSize=256;
+      src.connect(analyser);analyser.connect(audioCtx.destination);
+      const buf=new Uint8Array(analyser.frequencyBinCount);
+      const meter=()=>{
+        analyser.getByteTimeDomainData(buf);
+        let sum=0;
+        for(let i=0;i<buf.length;i++){const d=(buf[i]-128)/128;sum+=d*d;}
+        talkPulse(Math.min(1,Math.sqrt(sum/buf.length)*4));
+        meterRAF=requestAnimationFrame(meter);
+      };
+      audio.onplay=()=>{meterRAF=requestAnimationFrame(meter);};
+    }catch(e){
+      cadence=setInterval(()=>talkPulse(0.4+Math.random()*0.5),260);
+    }
+    audio.onended=finish;audio.onerror=finish;
+    audio.play().catch(finish);
+  });
+}
+
+/* browser voice — only used when no ElevenLabs key is set */
+function speakBrowserChunk(text){
+  return new Promise(resolve=>{
+    if(!('speechSynthesis' in window)){setTimeout(resolve,2000);return;}
+    const u=new SpeechSynthesisUtterance(text);
+    u.lang=cfg.lang;
+    u.voice=pickVoice();
+    u.rate=1.02;
+    let gotBoundary=false,fb=null;
+    u.onboundary=ev=>{gotBoundary=true;const len=(ev.charLength||4);talkPulse(0.45+Math.min(0.55,len*0.09));};
+    u.onstart=()=>{fb=setTimeout(()=>{if(!gotBoundary)fb=setInterval(()=>talkPulse(0.4+Math.random()*0.5),260);},600);};
+    const fin=()=>{clearTimeout(fb);clearInterval(fb);resolve();};
+    u.onend=fin;u.onerror=fin;
+    speechSynthesis.speak(u);
+  });
 }
 /* voice preference: user-chosen > Natural (Edge neural) > Google > any lang match */
 function pickVoice(){
