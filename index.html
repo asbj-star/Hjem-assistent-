@@ -544,7 +544,6 @@ function setState(s){
   else if(s==='thinking')setFaceMode('think');
   else if(s==='speaking')startTalking();
   else stopTalking();
-  if(s==='speaking')startBarge();else stopBarge();
 }
 
 /* =========================================================
@@ -602,42 +601,6 @@ function stopWake(){
 }
 function updateWakeBtn(){/* toggle now lives in settings */}
 
-/* =========================================================
-   BARGE-IN — while speaking, listen for the wake name; hearing
-   it cuts the reply off and goes straight to listening.
-   Requires the wake word feature to be on (same mic behavior).
-   ========================================================= */
-let bargeRec=null,bargeActive=false;
-function startBarge(){
-  if(!SR||!wakeWanted||bargeActive)return;
-  bargeActive=true;
-  bargeRec=new SR();
-  bargeRec.lang=cfg.lang;
-  bargeRec.continuous=true;
-  bargeRec.interimResults=true;
-  bargeRec.onresult=ev=>{
-    /* if the sentence HE is currently saying contains the wake word,
-       the mic is probably just hearing the speakers — ignore */
-    if(wakeMatch(currentSpeakText))return;
-    for(let i=ev.resultIndex;i<ev.results.length;i++){
-      if(wakeMatch(ev.results[i][0].transcript)){
-        stopBarge();
-        interruptToListen();
-        return;
-      }
-    }
-  };
-  bargeRec.onerror=()=>{bargeActive=false;};
-  bargeRec.onend=()=>{
-    bargeActive=false;
-    if(state==='speaking')setTimeout(startBarge,300);
-  };
-  try{bargeRec.start();}catch(e){bargeActive=false;}
-}
-function stopBarge(){
-  bargeActive=false;
-  try{bargeRec&&bargeRec.abort();}catch(e){}
-}
 /* Chrome allows only ONE recognizer at a time — starting while another
    is still releasing throws. Retry briefly instead of dying. */
 function safeStartRecog(r,onFail){
@@ -651,14 +614,6 @@ function safeStartRecog(r,onFail){
     }
   };
   attempt();
-}
-function interruptToListen(){
-  genId++;                               /* kills the stream + audio queue */
-  stopBarge();
-  try{if(currentAudio){currentAudio.pause();currentAudio=null;}}catch(e){}
-  window.speechSynthesis&&speechSynthesis.cancel();
-  clearTimeout(followTimer);
-  setTimeout(listenOnce,250);            /* give the mic a beat to free up */
 }
 
 /* =========================================================
@@ -677,7 +632,6 @@ function startConversation(){
 }
 function listenOnce(attempt){
   attempt=attempt||0;
-  stopBarge();               /* make sure the barge listener has let go of the mic */
   recog=new SR();
   recog.lang=cfg.lang;recog.interimResults=false;recog.maxAlternatives=1;
   let finalText='';
@@ -785,7 +739,7 @@ async function ask(question){
 let voices=[];
 function loadVoices(){voices=speechSynthesis.getVoices();}
 if('speechSynthesis' in window){loadVoices();speechSynthesis.onvoiceschanged=loadVoices;}
-let audioCtx=null,currentAudio=null,genId=0,currentSpeakText='';
+let audioCtx=null,currentAudio=null,genId=0;
 
 async function streamAsk(sys,headers,model){
   const myGen=++genId;
@@ -928,7 +882,6 @@ function elevenFetch(text){
 async function speakChunk(item,myGen){
   if(myGen!==genId)return;
   if(state!=='speaking')setState('speaking');
-  currentSpeakText=item.text||'';
   if(cfg.elKey){
     let blob;
     try{blob=await item.blobP;}
@@ -1012,7 +965,6 @@ function pickVoice(){
 function followUp(attempt){
   if(!conversationActive)return;
   attempt=attempt||0;
-  stopBarge();               /* the barge listener must release the mic first */
   setState('listening');
   recog=new SR();
   recog.lang=cfg.lang;recog.interimResults=false;
@@ -1053,12 +1005,8 @@ function onUp(e){
   if(e.target.closest('#settings'))return;
   const page=currentPage();
   if(page==='face'){
-    if(e.target.closest('#faceWrap')){
-      /* tap the orb while it talks = cut in and listen */
-      if(state==='speaking')interruptToListen();
-      return;
-    }
-    endConversation();
+    /* tap outside the face ends the conversation */
+    if(!e.target.closest('#faceWrap'))endConversation();
     return;
   }
   /* first user gesture: quietly try fullscreen + wake lock */
