@@ -57,96 +57,66 @@ body[data-theme="nightcall"]{
   --clock-glow:0 0 20px rgba(255,79,58,.4),0 0 50px rgba(255,79,58,.15);
 }
 
-/* night — locked auto-only theme: old VFD car stereo, amber/orange */
+/* night — locked auto-only theme: deep orange VFD, dot-matrix cells */
 body[data-theme="night"]{
-  --bg:#000000; --panel:#0a0500; --line:#241203;
-  --text:#ff8c1a; --muted:#7a3f08;
-  --amber:#ff7a00; --amber-soft:rgba(255,122,0,.10);
+  --bg:#000000; --panel:#0a0400; --line:#241002;
+  --text:#ff7314; --muted:#8a3d05;
+  --amber:#ff5f00; --amber-soft:rgba(255,95,0,.10);
   --clock-font:'Archivo Black',sans-serif;
   --clock-weight:400; --clock-stroke:0px;
-  --clock-glow:0 0 8px rgba(255,122,0,.9),0 0 28px rgba(255,110,0,.55),0 0 70px rgba(255,90,0,.25);
+  --clock-glow:
+    0 0 6px rgba(255,150,50,.95),
+    0 0 20px rgba(255,95,0,.9),
+    0 0 50px rgba(255,80,0,.7),
+    0 0 110px rgba(255,60,0,.45),
+    0 0 190px rgba(255,50,0,.22);
 }
 body[data-theme="night"]::before{
-  background:radial-gradient(120% 90% at 50% 40%, transparent 35%, rgba(0,0,0,.85) 100%);
+  background:radial-gradient(120% 90% at 50% 45%, transparent 28%, rgba(0,0,0,.92) 100%);
 }
-body.night-dim{filter:brightness(.6)}
+body.night-dim{filter:brightness(.62)}
 body.night-dim #waveCanvas,body.night-dim #waveLayer{opacity:0!important}
 
-/* ---- VFD stereo housing (night theme, clock page only) ---- */
-body[data-theme="night"] #page-clock{
-  padding:4vh 4vw;
+/* ---- the clock: fills the whole screen ---- */
+body[data-theme="night"] #page-clock{gap:0;justify-content:center;padding:0}
+body[data-theme="night"] #clockWrap{
+  position:fixed;inset:0;
+  display:flex;align-items:center;justify-content:center;
+  transform:perspective(900px) rotateX(9deg) scaleX(1.06);
+  transform-origin:center 58%;
 }
-body[data-theme="night"] #clockUnit{
-  position:relative;
-  width:min(94vw,1100px);
-  padding:clamp(14px,2.2vh,26px);
-  border-radius:14px;
-  /* brushed metal chassis */
-  background:
-    linear-gradient(180deg,#3a3a3c 0%,#232325 12%,#161617 50%,#0e0e0f 88%,#242426 100%);
-  box-shadow:
-    0 24px 60px rgba(0,0,0,.85),
-    inset 0 1px 0 rgba(255,255,255,.22),
-    inset 0 -1px 0 rgba(255,255,255,.08);
-}
-/* the glass panel itself */
-body[data-theme="night"] #clockGlass{
-  position:relative;
-  border-radius:9px;
-  overflow:hidden;
-  background:
-    radial-gradient(120% 150% at 50% 50%, #0b0602 0%, #050201 60%, #000 100%);
-  box-shadow:
-    inset 0 0 42px rgba(0,0,0,.95),
-    inset 0 0 8px rgba(255,120,0,.10),
-    0 0 0 2px #000,
-    0 0 0 3px #2c2c2e;
-  padding:clamp(10px,3vh,34px) clamp(10px,2vw,28px);
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
-  /* the bulge: horizontal barrel curve like curved VFD glass */
-  transform:perspective(1400px) rotateX(1.2deg);
-}
-/* fine dot-matrix grid over the display */
-body[data-theme="night"] #clockGlass::before{
-  content:"";position:absolute;inset:0;pointer-events:none;z-index:3;
-  background:
-    repeating-linear-gradient(90deg,rgba(0,0,0,.55) 0 1px,transparent 1px 4px),
-    repeating-linear-gradient(0deg,rgba(0,0,0,.55) 0 1px,transparent 1px 4px);
-  opacity:.5;
-}
-/* curved glass highlight + vignette (the bulge illusion) */
-body[data-theme="night"] #clockGlass::after{
-  content:"";position:absolute;inset:0;pointer-events:none;z-index:4;
-  background:
-    linear-gradient(180deg,rgba(255,255,255,.13) 0%,rgba(255,255,255,.04) 14%,transparent 34%),
-    radial-gradient(120% 80% at 50% 0%, rgba(255,255,255,.10), transparent 60%),
-    radial-gradient(140% 120% at 50% 50%, transparent 52%, rgba(0,0,0,.55) 88%, rgba(0,0,0,.85) 100%);
-}
-/* digits sit above the grid, slightly barrel-scaled toward the centre */
 body[data-theme="night"] #bigClock{
-  position:relative;z-index:2;
-  transform:scaleX(1.02);
+  font-size:min(46vw,105vh);
+  line-height:.82;
+  letter-spacing:-.04em;
+  display:block;
+  white-space:nowrap;
 }
+/* dot-matrix grid across the whole screen */
+body[data-theme="night"] #clockWrap::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:3;
+  background-image:
+    repeating-linear-gradient(90deg,rgba(0,0,0,.62) 0 1px,transparent 1px 6px),
+    repeating-linear-gradient(0deg, rgba(0,0,0,.62) 0 1px,transparent 1px 6px),
+    repeating-linear-gradient(90deg,rgba(0,0,0,.9) 0 2px,transparent 2px 36px),
+    repeating-linear-gradient(0deg, rgba(0,0,0,.9) 0 2px,transparent 2px 36px);
+}
+/* curved-glass sheen across the whole screen */
+body[data-theme="night"] #clockWrap::after{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:4;
+  background:
+    linear-gradient(180deg,rgba(255,255,255,.09) 0%,rgba(255,255,255,.03) 16%,transparent 38%),
+    radial-gradient(120% 100% at 50% 50%, transparent 48%, rgba(0,0,0,.55) 90%, rgba(0,0,0,.8) 100%);
+}
+/* date tucked at the bottom, above the overlays */
 body[data-theme="night"] #bigDate{
-  position:relative;z-index:2;
-  color:var(--amber);opacity:.75;
+  position:fixed;left:0;right:0;bottom:3.5vh;z-index:5;
+  text-align:center;
+  color:var(--amber);opacity:.55;
+  letter-spacing:.36em;
+  font-size:clamp(12px,1.7vw,20px);
+  text-shadow:0 0 16px rgba(255,95,0,.75);
 }
-/* little VFD-style tick marks along the bottom of the glass */
-body[data-theme="night"] #vfdBars{
-  position:relative;z-index:2;
-  display:flex;gap:3px;margin-top:6px;opacity:.55;
-}
-body[data-theme="night"] #vfdBars i{
-  display:block;width:6px;height:9px;background:var(--amber);
-  box-shadow:0 0 6px rgba(255,122,0,.8);border-radius:1px;
-}
-/* housing/bars only exist in night theme */
-#clockUnit{display:contents}
-#clockGlass{display:contents}
-#vfdBars{display:none}
-body[data-theme="night"] #clockUnit,body[data-theme="night"] #clockGlass{display:flex}
-body[data-theme="night"] #clockUnit{flex-direction:column}
-body[data-theme="night"] #vfdBars{display:flex}
 
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%;overflow:hidden}
@@ -311,13 +281,10 @@ body.waves-on:not([data-theme="nightcall"]) #waveCanvas{opacity:.3}
 
 <!-- CLOCK (default) -->
 <section class="page" id="page-clock">
-  <div id="clockUnit">
-    <div id="clockGlass">
-      <div id="bigClock">--<span class="colon">:</span>--</div>
-      <div id="bigDate"></div>
-      <div id="vfdBars"></div>
-    </div>
+  <div id="clockWrap">
+    <div id="bigClock">--<span class="colon">:</span>--</div>
   </div>
+  <div id="bigDate"></div>
 </section>
 
 <!-- WEATHER (voice-triggered) -->
@@ -987,6 +954,9 @@ async function ask(question){
     +(da()
     ?` AFSLUTNING: Hvis brugeren indikerer at samtalen er slut (fx "det var det", "tak", "godnat", "nej tak", "ikke mere"), skal svaret starte med tokenet [END] efterfulgt af en meget kort afsked (fx "Udmærket, hr."). `
     :` ENDING: If the user indicates the conversation is over (e.g. "that's it", "thank you", "goodnight", "no thanks", "nothing else"), start your reply with the token [END] followed by a very brief farewell (e.g. "Very good, sir."). `)
+    +(da()
+    ?`\nKlokken er lige nu ${new Date().toLocaleTimeString('da-DK',{hour:'2-digit',minute:'2-digit'})}.`
+    :`\nThe current time is ${new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}.`)
     +nowPlayingForPrompt()
     +weatherSummaryForPrompt()
     +(da()?` Dagens dato: ${new Date().toLocaleDateString('da-DK')}.`:` Today's date: ${new Date().toLocaleDateString('en-GB')}.`);
@@ -1676,12 +1646,6 @@ async function checkForUpdate(){
 }
 setInterval(checkForUpdate,180000);   /* every 3 minutes */
 setTimeout(checkForUpdate,10000);
-
-/* VFD tick marks (night theme decoration) */
-(function(){
-  const bars=document.getElementById('vfdBars');
-  for(let i=0;i<14;i++)bars.appendChild(document.createElement('i'));
-})();
 
 /* ========= boot ========= */
 /* single-instance guard: if the app is already open in another tab,
