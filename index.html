@@ -5,21 +5,40 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>Hjem — Ambient Assistant</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Rubik+Mono+One&family=Outfit:wght@300;400;500;700&family=VT323&family=Oswald:wght@300;500;700&family=Archivo+Black&family=Orbitron:wght@700;800;900&family=Bitter:wght@700&family=Fraunces:wght@900&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;700&family=VT323&family=Archivo+Black&family=Orbitron:wght@700;800;900&family=Fraunces:opsz,wght@9..144,900&display=swap" rel="stylesheet">
 <style>
 :root{
-  --bg:#17161a; --panel:#201f24; --line:#2e2c33;
-  --text:#efe9dd; --muted:#8d8894;
-  --amber:#e8a13c; --amber-soft:rgba(232,161,60,.14);
+  /* default = racing (British Racing Green) */
+  --bg:#0a1f13; --panel:#11291b; --line:#1c3a28;
+  --text:#e9f5ec; --muted:#6f8f7c;
+  --amber:#a8e6bc; --amber-soft:rgba(168,230,188,.14);
   --radius:22px;
-  --clock-font:'Rubik Mono One',monospace;
+  --clock-font:'Archivo Black',sans-serif;
   --clock-weight:400;
   --clock-stroke:0px;
-  --clock-glow:none;
+  --clock-glow:0 0 24px rgba(168,230,188,.25);
 }
 
-/* ============ THEMES ============ */
-/* vfd — vintage head-unit fluorescent display */
+/* ============ THEMES (primary = background, secondary = digits/accent) ============ */
+/* racing — British racing green / pastel green */
+body[data-theme="racing"]{
+  --bg:#0a1f13; --panel:#11291b; --line:#1c3a28;
+  --text:#e9f5ec; --muted:#6f8f7c;
+  --amber:#a8e6bc; --amber-soft:rgba(168,230,188,.14);
+  --clock-font:'Archivo Black',sans-serif;
+  --clock-weight:400; --clock-stroke:0px;
+  --clock-glow:0 0 24px rgba(168,230,188,.25);
+}
+/* jp50 — Japanese dictionary 050: dusky madder violet / ivory buff */
+body[data-theme="jp50"]{
+  --bg:#241219; --panel:#301a24; --line:#472737;
+  --text:#f2e6d3; --muted:#8c7480;
+  --amber:#eed9ae; --amber-soft:rgba(238,217,174,.14);
+  --clock-font:'Fraunces',serif;
+  --clock-weight:900; --clock-stroke:0px;
+  --clock-glow:0 0 20px rgba(238,217,174,.22);
+}
+/* vfd — retro car radio fluorescent display */
 body[data-theme="vfd"]{
   --bg:#050807; --panel:#0a100d; --line:#15251c;
   --text:#b8ffd9; --muted:#3f6b53;
@@ -28,46 +47,7 @@ body[data-theme="vfd"]{
   --clock-weight:400; --clock-stroke:1.5px;
   --clock-glow:0 0 18px rgba(61,255,160,.55),0 0 60px rgba(61,255,160,.18);
 }
-/* pitwall — race timing tower */
-body[data-theme="pitwall"]{
-  --bg:#0a0a0b; --panel:#131315; --line:#26262a;
-  --text:#ffffff; --muted:#77777d;
-  --amber:#ffd400; --amber-soft:rgba(255,212,0,.12);
-  --clock-font:'Oswald',sans-serif;
-  --clock-weight:700; --clock-stroke:0px;
-  --clock-glow:none;
-}
-/* nightcity — cyberpunk terminal */
-body[data-theme="nightcity"]{
-  --bg:#07080f; --panel:#0c0e1a; --line:#1c2140;
-  --text:#c8f4ff; --muted:#4b5e8a;
-  --amber:#00e5ff; --amber-soft:rgba(0,229,255,.12);
-  --clock-font:'VT323',monospace;
-  --clock-weight:400; --clock-stroke:1.5px;
-  --clock-glow:0 0 14px rgba(0,229,255,.6),3px 0 24px rgba(255,0,170,.25);
-}
-/* runestone — light, carved, nordic */
-body[data-theme="runestone"]{
-  --bg:#e8e2d4; --panel:#ded6c4; --line:#c9bfa9;
-  --text:#2c2a26; --muted:#8a8172;
-  --amber:#9a4a2a; --amber-soft:rgba(154,74,42,.12);
-  --clock-font:'Rubik Mono One',monospace;
-  --clock-weight:400; --clock-stroke:0px;
-  --clock-glow:1px 1px 0 rgba(255,255,255,.6);
-}
-body[data-theme="runestone"]::before{
-  background:radial-gradient(120% 90% at 50% 30%, transparent 55%, rgba(90,75,50,.22) 100%);
-}
-/* racing — British racing green, pastel green accent */
-body[data-theme="racing"]{
-  --bg:#071a10; --panel:#0d2417; --line:#173a26;
-  --text:#e9f5ec; --muted:#6f8f7c;
-  --amber:#8fe0ac; --amber-soft:rgba(143,224,172,.14);
-  --clock-font:'Archivo Black',sans-serif;
-  --clock-weight:400; --clock-stroke:0px;
-  --clock-glow:0 0 22px rgba(143,224,172,.28);
-}
-/* nightcall — synthwave navy + red-orange */
+/* nightcall — dark synthwave navy / red-orange */
 body[data-theme="nightcall"]{
   --bg:#080b1e; --panel:#0e1330; --line:#1c2350;
   --text:#e3e8ff; --muted:#5c6790;
@@ -76,43 +56,6 @@ body[data-theme="nightcall"]{
   --clock-weight:800; --clock-stroke:0px;
   --clock-glow:0 0 20px rgba(255,79,58,.4),0 0 50px rgba(255,79,58,.15);
 }
-/* grain — rapeseed field: mustard bg, sage accent, muted not plasticky */
-body[data-theme="grain"]{
-  --bg:#15130a; --panel:#1e1b10; --line:#332c18;
-  --text:#f1e7c8; --muted:#9c9270;
-  --amber:#a3c17a; --amber-soft:rgba(163,193,122,.14);
-  --clock-font:'Bitter',serif;
-  --clock-weight:700; --clock-stroke:0.6px;
-  --clock-glow:none;
-}
-/* jp50 — Japanese dictionary 050: dusky madder violet + ivory buff */
-body[data-theme="jp50"]{
-  --bg:#1e1017; --panel:#2a1720; --line:#402232;
-  --text:#f2e6d3; --muted:#8c7480;
-  --amber:#e8cfa0; --amber-soft:rgba(232,207,160,.14);
-  --clock-font:'Fraunces',serif;
-  --clock-weight:900; --clock-stroke:0px;
-  --clock-glow:0 0 18px rgba(232,207,160,.22);
-}
-/* jp99 — Japanese dictionary 099: pale lemon (light theme) + cerulean */
-body[data-theme="jp99"]{
-  --bg:#faf3c7; --panel:#f1e6a4; --line:#e0d183;
-  --text:#232838; --muted:#8b8360;
-  --amber:#2f7fc1; --amber-soft:rgba(47,127,193,.14);
-  --clock-font:'Space Grotesk',sans-serif;
-  --clock-weight:700; --clock-stroke:1px;
-  --clock-glow:0 1px 0 rgba(255,255,255,.5);
-}
-body[data-theme="jp99"]::before{
-  background:radial-gradient(120% 90% at 50% 30%, transparent 55%, rgba(120,100,40,.18) 100%);
-}
-/* nightcity scanlines */
-body[data-theme="nightcity"]::after{
-  content:"";position:fixed;inset:0;pointer-events:none;z-index:2;
-  background:repeating-linear-gradient(0deg,rgba(0,0,0,.22) 0 1px,transparent 1px 3px);
-}
-/* pitwall: condensed tall digits */
-body[data-theme="pitwall"] #bigClock{letter-spacing:.02em}
 
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%;overflow:hidden}
@@ -121,7 +64,9 @@ body{background:var(--bg);color:var(--text);font-family:'Outfit',system-ui,sans-
 body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:1;
   background:radial-gradient(120% 90% at 50% 30%, transparent 55%, rgba(0,0,0,.45) 100%)}
 
-/* ---------- WAVES (optional per-theme background flourish) ---------- */
+/* ---------- WAVES ----------
+   nightcall: blurred drifting bands (the original look).
+   all other themes: flowing horizontal sine waves on a canvas. */
 #waveLayer{
   position:fixed;inset:-15%;z-index:2;pointer-events:none;
   opacity:0;transition:opacity 1.2s ease;
@@ -132,13 +77,16 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:1;
   background-size:340% 340%;
   animation:waveDrift 26s linear infinite;
 }
-body.waves-on #waveLayer{opacity:.2}
-body[data-theme="runestone"].waves-on #waveLayer,
-body[data-theme="jp99"].waves-on #waveLayer{opacity:.14}
+body.waves-on[data-theme="nightcall"] #waveLayer{opacity:.2}
 @keyframes waveDrift{
   0%{background-position:0% 40%}
   100%{background-position:200% 60%}
 }
+#waveCanvas{
+  position:fixed;inset:0;width:100%;height:100%;z-index:2;pointer-events:none;
+  opacity:0;transition:opacity 1.2s ease;filter:blur(5px);
+}
+body.waves-on:not([data-theme="nightcall"]) #waveCanvas{opacity:.3}
 @media (prefers-reduced-motion:reduce){#waveLayer{animation:none}}
 
 /* ---------- PAGES ---------- */
@@ -149,9 +97,10 @@ body[data-theme="jp99"].waves-on #waveLayer{opacity:.14}
 /* CLOCK */
 #page-clock #bigClock{font-family:var(--clock-font);font-weight:var(--clock-weight);
   -webkit-text-stroke:var(--clock-stroke) currentColor;paint-order:stroke fill;
+  color:var(--amber);
   font-size:clamp(90px,24vw,300px);
   line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums;text-shadow:var(--clock-glow)}
-#page-clock .colon{color:var(--amber)}
+#page-clock .colon{color:inherit}
 #page-clock #bigDate{color:var(--muted);font-size:clamp(15px,2.6vw,26px);letter-spacing:.22em;
   text-transform:uppercase;margin-top:6px}
 #wakeDot{position:fixed;left:26px;bottom:30px;display:flex;align-items:center;gap:9px;
@@ -168,6 +117,7 @@ body[data-theme="jp99"].waves-on #waveLayer{opacity:.14}
 #w-icon{font-size:clamp(60px,11vw,120px)}
 #w-temp{font-family:var(--clock-font);font-weight:var(--clock-weight);
   -webkit-text-stroke:var(--clock-stroke) currentColor;paint-order:stroke fill;
+  color:var(--amber);
   font-size:clamp(70px,15vw,170px);line-height:1;text-shadow:var(--clock-glow)}
 #w-desc{color:var(--muted);font-size:clamp(16px,2.6vw,26px)}
 #w-hours{display:flex;gap:10px;margin-top:34px;padding:0 5vw;width:100%;max-width:1000px}
@@ -248,6 +198,7 @@ body[data-theme="jp99"].waves-on #waveLayer{opacity:.14}
 <body>
 
 <div id="waveLayer"></div>
+<canvas id="waveCanvas"></canvas>
 
 <!-- CLOCK (default) -->
 <section class="page" id="page-clock">
@@ -346,16 +297,10 @@ body[data-theme="jp99"].waves-on #waveLayer{opacity:.14}
     <div class="field">
       <label>Tema</label>
       <select id="f-theme">
-        <option value="hygge">Hygge (rav, standard)</option>
-        <option value="vfd">VFD (retro-bilradio)</option>
-        <option value="pitwall">Pit Wall (motorsport)</option>
-        <option value="nightcity">Night City (cyberpunk)</option>
-        <option value="runestone">Runestone (lys, nordisk)</option>
         <option value="racing">Racing Green</option>
-        <option value="nightcall">Nightcall (synthwave)</option>
-        <option value="grain">Grain (rapsmark)</option>
         <option value="jp50">Japansk 050 (dyb rødlilla)</option>
-        <option value="jp99">Japansk 099 (lys citrongul)</option>
+        <option value="vfd">VFD (retro-bilradio)</option>
+        <option value="nightcall">Nightcall (synthwave)</option>
       </select>
       <div class="hint">Also switchable by voice: “skift til cyberpunk” or “sæt tema til 99”.</div>
     </div>
@@ -420,7 +365,7 @@ const cfg={
   get wxDur(){return Math.max(5,parseInt(store.get('wx_dur','20'))||20);},
   get spClientId(){return store.get('sp_client_id','');},
   get name(){return store.get('assistant_name','Odin');},
-  get theme(){return store.get('theme','hygge');},
+  get theme(){return store.get('theme','racing');},
   get wavesOn(){return store.get('waves_on','0')==='1';},
   get elKey(){return store.get('el_key','');},
   get elVoice(){return store.get('el_voice','21m00Tcm4TlvDq8ikWAM');},
@@ -431,26 +376,61 @@ const $=id=>document.getElementById(id);
 function toast(m){const t=$('toast');t.textContent=m;t.classList.add('on');setTimeout(()=>t.classList.remove('on'),2600);}
 const da=()=>cfg.lang.startsWith('da');
 const THEMES={
-  hygge:'varm mørk med rav (standard)',
+  racing:'britisk racing green med pastelgrønne tal',
+  jp50:'japansk farve 050 — dyb rødlilla (dusky madder violet) med elfenbensgule (ivory buff) tal',
   vfd:'grøn selvlysende retro-bilradio',
-  pitwall:'motorsport-tidtagning, sort/hvid/gul',
-  nightcity:'cyberpunk, neon cyan og scanlines',
-  runestone:'lys nordisk runesten',
-  racing:'britisk racing green med pastelgrøn accent',
-  nightcall:'mørk synthwave-blå med rød-orange accent',
-  grain:'rapsmark-gul/mustard bund med salvie-grøn accent, jordnær',
-  jp50:'japansk farve 050 — dyb rødlilla (dusky madder violet) med elfenbensgul (ivory buff) accent',
-  jp99:'japansk farve 099 — lys bleg citrongul med cerulean blå accent (lyst tema)'
+  nightcall:'mørk synthwave-blå med rød-orange tal'
 };
 function applyTheme(t){
-  if(!THEMES[t])t='hygge';
-  if(t==='hygge')delete document.body.dataset.theme;
-  else document.body.dataset.theme=t;
+  if(!THEMES[t])t='racing';
+  document.body.dataset.theme=t;
   store.set('theme',t);
+  syncWaveAnim();
 }
 function applyWaves(on){
   document.body.classList.toggle('waves-on',!!on);
   store.set('waves_on',on?'1':'0');
+  syncWaveAnim();
+}
+
+/* ---- flowing horizontal sine waves (all themes except nightcall) ---- */
+const waveCv=document.getElementById('waveCanvas');
+const waveCtx=waveCv.getContext('2d');
+let waveRAF=null;
+function sizeWaveCanvas(){
+  waveCv.width=innerWidth;
+  waveCv.height=innerHeight;
+}
+addEventListener('resize',sizeWaveCanvas);
+sizeWaveCanvas();
+function drawWaves(t){
+  const w=waveCv.width,h=waveCv.height;
+  waveCtx.clearRect(0,0,w,h);
+  const col=getComputedStyle(document.body).getPropertyValue('--amber').trim()||'#ffffff';
+  waveCtx.strokeStyle=col;
+  waveCtx.lineWidth=2.5;
+  const rows=[0.3,0.5,0.7];
+  rows.forEach((frac,i)=>{
+    const baseY=h*frac;
+    const amp=h*0.03*(1+i*0.35);
+    const wl=w/(2.2+i*0.7);        /* wavelength */
+    const speed=0.00022*(1+i*0.4); /* px phase per ms */
+    waveCtx.globalAlpha=0.5-(i*0.12);
+    waveCtx.beginPath();
+    for(let x=0;x<=w;x+=6){
+      const y=baseY+Math.sin((x/wl)*Math.PI*2 + t*speed*(i%2?1:-1)*1000)*amp
+                +Math.sin((x/(wl*2.7))*Math.PI*2 + t*0.00013*1000)*amp*0.4;
+      if(x===0)waveCtx.moveTo(x,y);else waveCtx.lineTo(x,y);
+    }
+    waveCtx.stroke();
+  });
+  waveCtx.globalAlpha=1;
+  waveRAF=requestAnimationFrame(drawWaves);
+}
+function syncWaveAnim(){
+  const wantCanvas=cfg.wavesOn && document.body.dataset.theme!=='nightcall';
+  if(wantCanvas && !waveRAF){waveRAF=requestAnimationFrame(drawWaves);}
+  if(!wantCanvas && waveRAF){cancelAnimationFrame(waveRAF);waveRAF=null;waveCtx.clearRect(0,0,waveCv.width,waveCv.height);}
 }
 function esc(s){return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 
@@ -668,8 +648,8 @@ async function ask(question){
     ?"Svar altid på dansk, i naturligt talesprog — ingen markdown, ingen punktopstillinger. Hold svar på 1-3 sætninger medmindre der bedes om mere. VIGTIGT: Hvis brugeren beder om at se vejret, spørger om vejret eller vejrudsigten, skal dit svar starte med præcis tokenet [WEATHER] efterfulgt af et mellemrum og et kort, naturligt svar (fx \"Helt sikkert — her er vejret.\"). Brug aldrig tokenet ellers."
     :"Answer in plain spoken English — no markdown, no lists. Keep replies to 1-3 sentences unless asked for more. IMPORTANT: If the user asks to see the weather or asks about the weather or forecast, start your reply with the exact token [WEATHER] followed by a space and a short natural reply (e.g. \"Sure — here's the weather.\"). Never use the token otherwise.")
     +(da()
-    ?` TEMAER: Skærmen har temaer: ${Object.entries(THEMES).map(([k,v])=>k+' ('+v+')').join(', ')}. Temaerne "jp50" og "jp99" tales ofte som numre — "050"/"halvtreds"/"tema 50" betyder jp50, "099"/"nioghalvfems"/"tema 99" betyder jp99. Hvis brugeren beder om at skifte tema, udseende eller farver, skal dit svar starte med præcis [THEME:tema-id] efterfulgt af et mellemrum. Vælg det tema der bedst matcher ønsket. BØLGER: Skærmen kan også vise en blød, sløret bølgeeffekt i temaets accentfarve. Hvis brugeren beder om at slå bølger/wave-effekten til eller fra (fx "slå bølgerne til", "fjern bølgerne", "vis bølger"), skal svaret indeholde tokenet [WAVES:on] eller [WAVES:off]. Du kan kombinere flere tokens i træk i starten af samme svar hvis brugeren beder om flere ting på én gang, fx [THEME:jp99][WAVES:on] Så er det gjort! — efterfulgt af en kort naturlig bekræftelse. Brug aldrig tokens ellers.`
-    :` THEMES: The screen has themes: ${Object.entries(THEMES).map(([k,v])=>k+' ('+v+')').join(', ')}. Themes "jp50" and "jp99" are often spoken as numbers — "050"/"fifty"/"theme 50" means jp50, "099"/"ninety-nine"/"theme 99" means jp99. If the user asks to change theme, look or colours, start your reply with exactly [THEME:theme-id]. Pick the best-matching theme. WAVES: The screen can also show a soft, blurred wave effect tinted in the theme's accent colour. If the user asks to turn waves on or off (e.g. "turn on the waves", "remove the waves"), include the token [WAVES:on] or [WAVES:off]. You can chain multiple tokens at the start of one reply if the user asks for several things at once, e.g. [THEME:jp99][WAVES:on] Done! — followed by a short natural confirmation. Never use tokens otherwise.`)
+    ?` TEMAER: Skærmen har temaer: ${Object.entries(THEMES).map(([k,v])=>k+' ('+v+')').join(', ')}. Temaet "jp50" tales ofte som et nummer — "050"/"halvtreds"/"tema 50" betyder jp50. Hvis brugeren beder om at skifte tema, udseende eller farver, skal dit svar starte med præcis [THEME:tema-id] efterfulgt af et mellemrum. Vælg det tema der bedst matcher ønsket. BØLGER: Skærmen kan også vise en blød, sløret bølgeeffekt i temaets accentfarve. Hvis brugeren beder om at slå bølger/wave-effekten til eller fra (fx "slå bølgerne til", "fjern bølgerne", "vis bølger"), skal svaret indeholde tokenet [WAVES:on] eller [WAVES:off]. Du kan kombinere flere tokens i træk i starten af samme svar hvis brugeren beder om flere ting på én gang, fx [THEME:jp50][WAVES:on] Så er det gjort! — efterfulgt af en kort naturlig bekræftelse. Brug aldrig tokens ellers.`
+    :` THEMES: The screen has themes: ${Object.entries(THEMES).map(([k,v])=>k+' ('+v+')').join(', ')}. The theme "jp50" is often spoken as a number — "050"/"fifty"/"theme 50" means jp50. If the user asks to change theme, look or colours, start your reply with exactly [THEME:theme-id]. Pick the best-matching theme. WAVES: The screen can also show a soft, blurred wave effect tinted in the theme's accent colour. If the user asks to turn waves on or off (e.g. "turn on the waves", "remove the waves"), include the token [WAVES:on] or [WAVES:off]. You can chain multiple tokens at the start of one reply if the user asks for several things at once, e.g. [THEME:jp50][WAVES:on] Done! — followed by a short natural confirmation. Never use tokens otherwise.`)
     +(da()
     ?` MUSIK: Du kan styre Spotify. Hvis brugeren beder om at afspille en bestemt sang, kunstner eller album, skal svaret starte med [PLAY:søgetekst] — fx [PLAY:Tame Impala Let It Happen]. Hvis brugeren beder om en playliste, brug [PLAYLIST:navn] — fx [PLAYLIST:fokus]. Til simple kommandoer brug [MUSIC:pause], [MUSIC:resume], [MUSIC:next] eller [MUSIC:prev]. Efter tokenet skriver du en kort naturlig bekræftelse. Brug aldrig musik-tokens hvis brugeren blot spørger om hvad der spiller — det kan du se herunder.`
     :` MUSIC: You can control Spotify. If the user asks to play a specific song, artist or album, start your reply with [PLAY:search text] — e.g. [PLAY:Tame Impala Let It Happen]. For a playlist use [PLAYLIST:name] — e.g. [PLAYLIST:focus]. For simple commands use [MUSIC:pause], [MUSIC:resume], [MUSIC:next] or [MUSIC:prev]. Follow the token with a short natural confirmation. Never use music tokens if the user is merely asking what is currently playing — that information is given below.`)
