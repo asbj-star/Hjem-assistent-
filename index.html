@@ -537,6 +537,7 @@ function setState(s){
   else if(s==='thinking')setFaceMode('think');
   else if(s==='speaking')startTalking();
   else stopTalking();
+  if(s==='speaking')startBarge();else stopBarge();
 }
 
 /* =========================================================
@@ -582,6 +583,47 @@ function stopWake(){
   try{wakeRec&&wakeRec.abort();}catch(e){}
 }
 function updateWakeBtn(){/* toggle now lives in settings */}
+
+/* =========================================================
+   BARGE-IN — while speaking, listen for the wake name; hearing
+   it cuts the reply off and goes straight to listening.
+   Requires the wake word feature to be on (same mic behavior).
+   ========================================================= */
+let bargeRec=null,bargeActive=false;
+function startBarge(){
+  if(!SR||!wakeWanted||bargeActive)return;
+  bargeActive=true;
+  bargeRec=new SR();
+  bargeRec.lang=cfg.lang;
+  bargeRec.continuous=true;
+  bargeRec.interimResults=true;
+  bargeRec.onresult=ev=>{
+    for(let i=ev.resultIndex;i<ev.results.length;i++){
+      if(wakeMatch(ev.results[i][0].transcript)){
+        stopBarge();
+        interruptToListen();
+        return;
+      }
+    }
+  };
+  bargeRec.onerror=()=>{bargeActive=false;};
+  bargeRec.onend=()=>{
+    bargeActive=false;
+    if(state==='speaking')setTimeout(startBarge,300);
+  };
+  try{bargeRec.start();}catch(e){bargeActive=false;}
+}
+function stopBarge(){
+  bargeActive=false;
+  try{bargeRec&&bargeRec.abort();}catch(e){}
+}
+function interruptToListen(){
+  genId++;                               /* kills the stream + audio queue */
+  try{if(currentAudio){currentAudio.pause();currentAudio=null;}}catch(e){}
+  window.speechSynthesis&&speechSynthesis.cancel();
+  clearTimeout(followTimer);
+  listenOnce();                          /* straight back to listening */
+}
 
 /* =========================================================
    CONVERSATION — listen → think → speak → follow-up window
@@ -916,7 +958,7 @@ function followUp(){
   recog=new SR();
   recog.lang=cfg.lang;recog.interimResults=false;
   let finalText='';
-  followTimer=setTimeout(()=>{try{recog.stop();}catch(e){}},6000);
+  followTimer=setTimeout(()=>{try{recog.stop();}catch(e){}},3000);
   recog.onresult=ev=>{
     clearTimeout(followTimer);
     for(const r of ev.results){if(r.isFinal)finalText+=r[0].transcript;}
@@ -946,8 +988,12 @@ function onUp(e){
   if(e.target.closest('#settings'))return;
   const page=currentPage();
   if(page==='face'){
-    /* tap outside the face ends the conversation */
-    if(!e.target.closest('#faceWrap'))endConversation();
+    if(e.target.closest('#faceWrap')){
+      /* tap the orb while it talks = cut in and listen */
+      if(state==='speaking')interruptToListen();
+      return;
+    }
+    endConversation();
     return;
   }
   /* first user gesture: quietly try fullscreen + wake lock */
@@ -1194,11 +1240,41 @@ $('saveSet').addEventListener('click',()=>{
 });
 $('useGeo').addEventListener('click',e=>{
   e.preventDefault();
-  navigator.geolocation.getCurrentPosition(p=>{
-    $('f-lat').value=p.coords.latitude.toFixed(3);
-    $('f-lon').value=p.coords.longitude.toFixed(3);
-    toast('Location filled in — press Save');
-  },()=>toast('Location access was blocked.'));
+  toast(da()?'Finder placering…':'Finding location…');
+  const useCoords=async(lat,lon,cityGuess)=>{
+    $('f-lat').value=lat.toFixed(3);
+    $('f-lon').value=lon.toFixed(3);
+    store.set('lat',lat.toFixed(3));
+    store.set('lon',lon.toFixed(3));
+    let city=cityGuess;
+    if(!city){
+      try{
+        const r=await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=${da()?'da':'en'}`);
+        const d=await r.json();
+        city=d.city||d.locality||'';
+      }catch(err){}
+    }
+    if(city){$('f-city').value=city;store.set('city',city);}
+    fetchWeather();
+    toast((da()?'Placering sat':'Location set')+(city?': '+city:'')+' ✓');
+  };
+  const ipFallback=async()=>{
+    try{
+      const r=await fetch('https://ipwho.is/');
+      const d=await r.json();
+      if(d&&d.success!==false&&d.latitude){
+        await useCoords(d.latitude,d.longitude,d.city||'');
+      }else throw new Error('ip lookup failed');
+    }catch(err){
+      toast(da()?'Kunne ikke finde placering — udfyld manuelt.':'Could not find location — enter it manually.');
+    }
+  };
+  if(!navigator.geolocation){ipFallback();return;}
+  navigator.geolocation.getCurrentPosition(
+    p=>useCoords(p.coords.latitude,p.coords.longitude,''),
+    ()=>ipFallback(),   /* denied / unavailable / no Windows location service */
+    {enableHighAccuracy:false,timeout:8000,maximumAge:600000}
+  );
 });
 $('spAuthBtn').addEventListener('click',()=>{
   store.set('sp_client_id',$('f-spid').value.trim());
