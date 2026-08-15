@@ -121,6 +121,12 @@ body.waves-on:not([data-theme="nightcall"]) #waveCanvas{opacity:.3}
   font-size:clamp(70px,15vw,170px);line-height:1;text-shadow:var(--clock-glow)}
 #w-desc{color:var(--muted);font-size:clamp(16px,2.6vw,26px)}
 #w-hours{display:flex;gap:10px;margin-top:34px;padding:0 5vw;width:100%;max-width:1000px}
+#w-days{display:flex;gap:10px;margin-top:12px;padding:0 5vw;width:100%;max-width:1000px}
+.wx-d{background:transparent;border:1px solid var(--line);border-radius:16px;padding:12px 0;text-align:center;flex:1}
+.wx-d .h{color:var(--muted);font-size:13px;letter-spacing:.08em;text-transform:capitalize}
+.wx-d .i{font-size:20px;margin:4px 0}
+.wx-d .t{font-size:16px;font-weight:400}
+.wx-d .t .lo{color:var(--muted)}
 .wx-h{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px 0;text-align:center;flex:1}
 .wx-h .h{color:var(--muted);font-size:13px;letter-spacing:.08em}
 .wx-h .i{font-size:22px;margin:5px 0}
@@ -213,6 +219,7 @@ body.waves-on:not([data-theme="nightcall"]) #waveCanvas{opacity:.3}
   <div id="w-main"><div id="w-icon">·</div><div id="w-temp">--°</div></div>
   <div id="w-desc"></div>
   <div id="w-hours"></div>
+  <div id="w-days"></div>
   <div id="w-timer"></div>
 </section>
 
@@ -684,9 +691,19 @@ function nowPlayingForPrompt(){
 function weatherSummaryForPrompt(){
   if(!wxData)return'';
   const c=wxData.current;
-  return (da()
+  let out=(da()
     ?`\nAktuelt vejr i ${cfg.city}: ${Math.round(c.temperature_2m)}°C, vejrkode ${c.weather_code}.`
     :`\nCurrent weather in ${cfg.city}: ${Math.round(c.temperature_2m)}°C, weather code ${c.weather_code}.`);
+  if(wxData.daily&&wxData.daily.time){
+    const d=wxData.daily;
+    const days=d.time.map((t,i)=>{
+      const day=new Date(t).toLocaleDateString(da()?'da-DK':'en-GB',{weekday:'long'});
+      const cond=(da()?(WMO[d.weather_code[i]]||['?'])[0]:(WMO_EN[d.weather_code[i]]||'?'));
+      return `${day}: ${Math.round(d.temperature_2m_min[i])}–${Math.round(d.temperature_2m_max[i])}°C, ${cond}, ${d.precipitation_probability_max[i]}% ${da()?'regn-risiko':'rain chance'}`;
+    }).join('; ');
+    out+=(da()?`\n7-dages udsigt (første dag er i dag): ${days}.`:`\n7-day forecast (first day is today): ${days}.`);
+  }
+  return out;
 }
 async function ask(question){
   setState('thinking');
@@ -704,6 +721,9 @@ async function ask(question){
     +(da()
     ?` MUSIK: Du kan styre Spotify. Hvis brugeren beder om at afspille en bestemt sang, kunstner eller album, skal svaret starte med [PLAY:søgetekst] — fx [PLAY:Tame Impala Let It Happen]. Hvis brugeren beder om en playliste, brug [PLAYLIST:navn] — fx [PLAYLIST:fokus]. Til simple kommandoer brug [MUSIC:pause], [MUSIC:resume], [MUSIC:next] eller [MUSIC:prev]. Efter tokenet skriver du en kort naturlig bekræftelse. Brug aldrig musik-tokens hvis brugeren blot spørger om hvad der spiller — det kan du se herunder.`
     :` MUSIC: You can control Spotify. If the user asks to play a specific song, artist or album, start your reply with [PLAY:search text] — e.g. [PLAY:Tame Impala Let It Happen]. For a playlist use [PLAYLIST:name] — e.g. [PLAYLIST:focus]. For simple commands use [MUSIC:pause], [MUSIC:resume], [MUSIC:next] or [MUSIC:prev]. Follow the token with a short natural confirmation. Never use music tokens if the user is merely asking what is currently playing — that information is given below.`)
+    +(da()
+    ?` AFSLUTNING: Hvis brugeren indikerer at samtalen er slut (fx "det var det", "tak", "godnat", "nej tak", "ikke mere"), skal svaret starte med tokenet [END] efterfulgt af en meget kort afsked (fx "Udmærket, hr."). `
+    :` ENDING: If the user indicates the conversation is over (e.g. "that's it", "thank you", "goodnight", "no thanks", "nothing else"), start your reply with the token [END] followed by a very brief farewell (e.g. "Very good, sir."). `)
     +nowPlayingForPrompt()
     +weatherSummaryForPrompt()
     +(da()?` Dagens dato: ${new Date().toLocaleDateString('da-DK')}.`:` Today's date: ${new Date().toLocaleDateString('en-GB')}.`);
@@ -738,7 +758,7 @@ async function streamAsk(sys,headers,model){
   const q=[];                 /* ordered sentence queue with per-item prefetch */
   let playing=false,streamDone=false,finished=false;
   let weatherTriggered=false,buffer='',leading=true,spoken='';
-  let musicGate=null,suppressText=false;
+  let musicGate=null,suppressText=false,endAfter=false;
 
   const finishIfDone=()=>{
     if(finished||!streamDone||playing||q.length)return;
@@ -746,6 +766,7 @@ async function streamAsk(sys,headers,model){
     finished=true;
     history.push({role:'assistant',content:spoken.trim()||'OK'});
     if(weatherTriggered)endConversation();
+    else if(endAfter)endConversation();
     else if(spoken.trim())followUp();
     else endConversation();
   };
@@ -790,6 +811,7 @@ async function streamAsk(sys,headers,model){
       if(m=tok.match(/^\[THEME:([a-z0-9]+)\]$/i))applyTheme(m[1].toLowerCase());
       else if(m=tok.match(/^\[WAVES:(on|off)\]$/i))applyWaves(m[1].toLowerCase()==='on');
       else if(/^\[WEATHER\]$/i.test(tok)){weatherTriggered=true;conversationActive=false;showWeatherPage();render();}
+      else if(/^\[END\]$/i.test(tok))endAfter=true;
       else if(m=tok.match(/^\[PLAY:([^\]]+)\]$/i))musicGate=spotifyPlayRequest(m[1].trim(),'track');
       else if(m=tok.match(/^\[PLAYLIST:([^\]]+)\]$/i))musicGate=spotifyPlayRequest(m[1].trim(),'playlist');
       else if(m=tok.match(/^\[MUSIC:(pause|resume|next|prev)\]$/i))musicGate=spotifySimpleCommand(m[1].toLowerCase());
@@ -958,7 +980,7 @@ function followUp(){
   recog=new SR();
   recog.lang=cfg.lang;recog.interimResults=false;
   let finalText='';
-  followTimer=setTimeout(()=>{try{recog.stop();}catch(e){}},3000);
+  followTimer=setTimeout(()=>{try{recog.stop();}catch(e){}},6000);
   recog.onresult=ev=>{
     clearTimeout(followTimer);
     for(const r of ev.results){if(r.isFinal)finalText+=r[0].transcript;}
@@ -1028,7 +1050,8 @@ const WMO_EN={0:'Clear',1:'Mostly clear',2:'Partly cloudy',3:'Overcast',45:'Fog'
 async function fetchWeather(){
   try{
     const url=`https://api.open-meteo.com/v1/forecast?latitude=${cfg.lat}&longitude=${cfg.lon}`+
-      `&current=temperature_2m,weather_code&hourly=temperature_2m,weather_code&forecast_hours=8&timezone=auto`;
+      `&current=temperature_2m,weather_code&hourly=temperature_2m,weather_code&forecast_hours=8`+
+      `&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=7&timezone=auto`;
     const r=await fetch(url);wxData=await r.json();
     const code=wxData.current.weather_code;
     const [dd,icon]=WMO[code]||['—','·'];
@@ -1047,6 +1070,20 @@ async function fetchWeather(){
         <div class="i">${(WMO[c]||['','·'])[1]}</div>
         <div class="t">${Math.round(wxData.hourly.temperature_2m[i])}°</div>`;
       hours.appendChild(el);
+    }
+    /* daily row: the next 5 days, starting tomorrow */
+    const daysEl=$('w-days');daysEl.innerHTML='';
+    if(wxData.daily&&wxData.daily.time){
+      const dd=wxData.daily;
+      for(let i=1;i<=Math.min(5,dd.time.length-1);i++){
+        const day=new Date(dd.time[i]).toLocaleDateString(da()?'da-DK':'en-GB',{weekday:'short'});
+        const el2=document.createElement('div');
+        el2.className='wx-d';
+        el2.innerHTML=`<div class="h">${day}</div>
+          <div class="i">${(WMO[dd.weather_code[i]]||['','·'])[1]}</div>
+          <div class="t">${Math.round(dd.temperature_2m_max[i])}° <span class="lo">${Math.round(dd.temperature_2m_min[i])}°</span></div>`;
+        daysEl.appendChild(el2);
+      }
     }
   }catch(e){console.error(e);}
 }
