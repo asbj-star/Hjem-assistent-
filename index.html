@@ -557,7 +557,11 @@ let wakeRec=null, wakeRunning=false, wakeWanted=false;
 
 function wakeMatch(text){
   const t=text.toLowerCase();
-  return cfg.wakeWords.some(w=>t.includes(w));
+  return cfg.wakeWords.some(w=>{
+    if(!w)return false;
+    const esc=w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    return new RegExp('\\b'+esc+'\\b').test(t);   /* whole word only */
+  });
 }
 function startWake(){
   if(!SR||!wakeWanted||wakeRunning||conversationActive)return;
@@ -605,6 +609,9 @@ function startBarge(){
   bargeRec.continuous=true;
   bargeRec.interimResults=true;
   bargeRec.onresult=ev=>{
+    /* if the sentence HE is currently saying contains the wake word,
+       the mic is probably just hearing the speakers — ignore */
+    if(wakeMatch(currentSpeakText))return;
     for(let i=ev.resultIndex;i<ev.results.length;i++){
       if(wakeMatch(ev.results[i][0].transcript)){
         stopBarge();
@@ -661,23 +668,27 @@ function startConversation(){
   render();
   listenOnce();
 }
-function listenOnce(){
+function listenOnce(attempt){
+  attempt=attempt||0;
   stopBarge();               /* make sure the barge listener has let go of the mic */
   recog=new SR();
   recog.lang=cfg.lang;recog.interimResults=false;recog.maxAlternatives=1;
   let finalText='';
+  const t0=Date.now();
   setState('listening');
   recog.onresult=ev=>{
     for(const r of ev.results){if(r.isFinal)finalText+=r[0].transcript;}
   };
   recog.onerror=ev=>{
-    if(ev.error==='not-allowed')toast('Microphone access was blocked — allow it in browser settings.');
-    endConversation();
+    if(ev.error==='not-allowed'){toast('Microphone access was blocked — allow it in browser settings.');endConversation();}
+    /* other errors (no-speech, aborted, audio glitches): let onend decide */
   };
   recog.onend=()=>{
     if(state!=='listening')return;
-    if(finalText.trim())ask(finalText.trim());
-    else endConversation();
+    if(finalText.trim()){ask(finalText.trim());return;}
+    /* ended instantly with nothing heard — mic was likely still settling; retry */
+    if(Date.now()-t0<900&&attempt<2){setTimeout(()=>listenOnce(attempt+1),200);return;}
+    endConversation();
   };
   safeStartRecog(recog,endConversation);
 }
@@ -767,7 +778,7 @@ async function ask(question){
 let voices=[];
 function loadVoices(){voices=speechSynthesis.getVoices();}
 if('speechSynthesis' in window){loadVoices();speechSynthesis.onvoiceschanged=loadVoices;}
-let audioCtx=null,currentAudio=null,genId=0;
+let audioCtx=null,currentAudio=null,genId=0,currentSpeakText='';
 
 async function streamAsk(sys,headers,model){
   const myGen=++genId;
@@ -910,6 +921,7 @@ function elevenFetch(text){
 async function speakChunk(item,myGen){
   if(myGen!==genId)return;
   if(state!=='speaking')setState('speaking');
+  currentSpeakText=item.text||'';
   if(cfg.elKey){
     let blob;
     try{blob=await item.blobP;}
@@ -990,23 +1002,30 @@ function pickVoice(){
 }
 
 /* after an answer, keep listening briefly for a follow-up */
-function followUp(){
+function followUp(attempt){
   if(!conversationActive)return;
+  attempt=attempt||0;
   stopBarge();               /* the barge listener must release the mic first */
   setState('listening');
   recog=new SR();
   recog.lang=cfg.lang;recog.interimResults=false;
   let finalText='';
+  const t0=Date.now();
   followTimer=setTimeout(()=>{try{recog.stop();}catch(e){}},6000);
   recog.onresult=ev=>{
     clearTimeout(followTimer);
     for(const r of ev.results){if(r.isFinal)finalText+=r[0].transcript;}
   };
-  recog.onerror=()=>endConversation();
+  recog.onerror=ev=>{
+    if(ev.error==='not-allowed')endConversation();
+    /* other errors: onend decides */
+  };
   recog.onend=()=>{
     clearTimeout(followTimer);
-    if(finalText.trim())ask(finalText.trim());
-    else endConversation();
+    if(!conversationActive)return;
+    if(finalText.trim()){ask(finalText.trim());return;}
+    if(Date.now()-t0<900&&attempt<2){setTimeout(()=>followUp(attempt+1),200);return;}
+    endConversation();
   };
   safeStartRecog(recog,endConversation);
 }
