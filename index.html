@@ -315,6 +315,17 @@ body[data-theme="jp99"].waves-on #waveLayer{opacity:.14}
     </div>
 
     <div class="field">
+      <label>ElevenLabs API key (optional — realistic voice)</label>
+      <input id="f-elkey" type="password" placeholder="Leave empty to use browser voice">
+      <div class="hint">Free account at elevenlabs.io → profile → API Keys. ~10 min of speech/month free, then it automatically falls back to the browser voice below.</div>
+    </div>
+    <div class="field">
+      <label>ElevenLabs voice ID</label>
+      <input id="f-elvoice" type="text" placeholder="21m00Tcm4TlvDq8ikWAM">
+      <div class="hint">Find IDs in the elevenlabs.io voice library. Default is “Rachel”.</div>
+    </div>
+
+    <div class="field">
       <label>Stemme</label>
       <select id="f-voice"><option value="">Auto (best available)</option></select>
       <div class="hint">Voices come from the browser. Tip: Microsoft Edge exposes natural Danish neural voices (look for “Natural” in the name) — far better than the default. The list only shows voices matching the chosen language.</div>
@@ -409,6 +420,8 @@ const cfg={
   get name(){return store.get('assistant_name','Odin');},
   get theme(){return store.get('theme','hygge');},
   get wavesOn(){return store.get('waves_on','0')==='1';},
+  get elKey(){return store.get('el_key','');},
+  get elVoice(){return store.get('el_voice','21m00Tcm4TlvDq8ikWAM');},
   get wakeOn(){return store.get('wake_on','0')==='1';},
   get wakeWords(){return store.get('wake_words',this.name.toLowerCase()).split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);}
 };
@@ -619,6 +632,7 @@ function listenOnce(){
 function endConversation(){
   try{recog&&recog.abort();}catch(e){}
   window.speechSynthesis&&speechSynthesis.cancel();
+  try{if(currentAudio){currentAudio.pause();currentAudio=null;}}catch(e){}
   clearTimeout(followTimer);
   conversationActive=false;
   setState('idle');
@@ -742,6 +756,57 @@ function speak(text,question,weatherTriggered){
     if(weatherTriggered){endConversation();}
     else followUp();
   };
+  if(cfg.elKey){
+    speakEleven(text,done).catch(()=>speakBrowser(text,done));
+  }else{
+    speakBrowser(text,done);
+  }
+}
+
+/* ---- ElevenLabs: realistic voice, mouth driven by real loudness ---- */
+let audioCtx=null,currentAudio=null;
+async function speakEleven(text,done){
+  const res=await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(cfg.elVoice)}?output_format=mp3_44100_64`,{
+    method:'POST',
+    headers:{'xi-api-key':cfg.elKey,'Content-Type':'application/json'},
+    body:JSON.stringify({text,model_id:'eleven_flash_v2_5'})
+  });
+  if(!res.ok)throw new Error('ElevenLabs '+res.status); /* quota out / bad key → fallback */
+  const blob=await res.blob();
+  const audio=new Audio(URL.createObjectURL(blob));
+  currentAudio=audio;
+  try{
+    audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
+    if(audioCtx.state==='suspended')await audioCtx.resume();
+    const src=audioCtx.createMediaElementSource(audio);
+    const analyser=audioCtx.createAnalyser();
+    analyser.fftSize=256;
+    src.connect(analyser);analyser.connect(audioCtx.destination);
+    const buf=new Uint8Array(analyser.frequencyBinCount);
+    let meterRAF=null;
+    const meter=()=>{
+      analyser.getByteTimeDomainData(buf);
+      let sum=0;
+      for(let i=0;i<buf.length;i++){const d=(buf[i]-128)/128;sum+=d*d;}
+      const rms=Math.sqrt(sum/buf.length);       /* 0..~0.5 */
+      talkPulse(Math.min(1,rms*4));
+      meterRAF=requestAnimationFrame(meter);
+    };
+    audio.onplay=()=>{meterRAF=requestAnimationFrame(meter);};
+    const finish=()=>{if(meterRAF)cancelAnimationFrame(meterRAF);URL.revokeObjectURL(audio.src);done();};
+    audio.onended=finish;audio.onerror=finish;
+    await audio.play();
+  }catch(e){
+    /* analyser failed (autoplay policy etc) — play plainly with fallback cadence */
+    const t=setInterval(()=>talkPulse(0.4+Math.random()*0.5),260);
+    const finish=()=>{clearInterval(t);done();};
+    audio.onended=finish;audio.onerror=finish;
+    await audio.play();
+  }
+}
+
+/* ---- browser voice fallback ---- */
+function speakBrowser(text,done){
   if(!('speechSynthesis' in window)){setTimeout(done,3500);return;}
   speechSynthesis.cancel(); /* kill any overlapping/queued utterance */
   const u=new SpeechSynthesisUtterance(text);
@@ -1031,6 +1096,7 @@ function openSettings(){
   $('f-key').value=cfg.key;$('f-model').value=cfg.model;$('f-lang').value=cfg.lang;
   $('f-lat').value=cfg.lat;$('f-lon').value=cfg.lon;$('f-city').value=cfg.city;
   $('f-wxdur').value=cfg.wxDur;$('f-spid').value=cfg.spClientId;
+  $('f-elkey').value=cfg.elKey;$('f-elvoice').value=cfg.elVoice;
   $('f-theme').value=cfg.theme;
   /* populate voice list for the selected language */
   const vsel=$('f-voice');
@@ -1062,6 +1128,8 @@ $('saveSet').addEventListener('click',()=>{
   applyTheme($('f-theme').value);
   applyWaves($('f-waves').checked);
   store.set('voice_name',$('f-voice').value);
+  store.set('el_key',$('f-elkey').value.trim());
+  store.set('el_voice',$('f-elvoice').value.trim()||'21m00Tcm4TlvDq8ikWAM');
   store.set('sp_client_id',$('f-spid').value.trim());
   store.set('assistant_name',$('f-name').value.trim()||'Odin');
   store.set('wake_words',$('f-wakewords').value);
