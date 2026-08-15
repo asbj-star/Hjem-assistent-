@@ -200,9 +200,17 @@ body[data-theme="jp99"].waves-on #waveLayer{opacity:.14}
 #stateLabel{color:var(--amber);letter-spacing:.3em;text-transform:uppercase;font-size:14px;min-height:20px}
 
 .face-svg{width:100%;height:100%;display:block}
-.eye{fill:var(--amber);transform-origin:center;transition:transform .12s}
-.mouth{stroke:var(--amber);stroke-width:7;fill:none;stroke-linecap:round}
-.blink .eye{transform:scaleY(.08)}
+.orb{fill:var(--amber);transform-origin:center;transform-box:fill-box}
+.halo{fill:var(--amber);transform-origin:center;transform-box:fill-box}
+.ringline{fill:none;stroke:var(--line);stroke-width:2}
+/* thinking: slow soft pulse */
+.face-svg.thinking .orb{animation:orbThink 1.5s ease-in-out infinite}
+.face-svg.thinking .halo{animation:haloThink 1.5s ease-in-out infinite}
+@keyframes orbThink{0%,100%{transform:scale(.94)}50%{transform:scale(1.05)}}
+@keyframes haloThink{0%,100%{transform:scale(.92);opacity:.08}50%{transform:scale(1.12);opacity:.2}}
+/* idle: gentle breathing */
+.face-svg.idlebreathe .orb{animation:orbThink 4.5s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){.face-svg .orb,.face-svg .halo{animation:none!important}}
 
 /* TOP BAR removed — settings open via long-press anywhere */
 
@@ -323,12 +331,6 @@ body[data-theme="jp99"].waves-on #waveLayer{opacity:.14}
       <label>ElevenLabs voice ID</label>
       <input id="f-elvoice" type="text" placeholder="21m00Tcm4TlvDq8ikWAM">
       <div class="hint">Find IDs in the elevenlabs.io voice library. Default is “Rachel”.</div>
-    </div>
-
-    <div class="field">
-      <label>Stemme</label>
-      <select id="f-voice"><option value="">Auto (best available)</option></select>
-      <div class="hint">Voices come from the browser. Tip: Microsoft Edge exposes natural Danish neural voices (look for “Natural” in the name) — far better than the default. The list only shows voices matching the chosen language.</div>
     </div>
 
     <div class="check">
@@ -487,56 +489,53 @@ function showWeatherPage(){
 
 /* ========= faces ========= */
 function buildFace(svg){
-  svg.innerHTML=`<circle cx="100" cy="100" r="92" fill="none" stroke="var(--line)" stroke-width="2"/>
-    <ellipse class="eye" cx="70" cy="82" rx="9" ry="14"/>
-    <ellipse class="eye" cx="130" cy="82" rx="9" ry="14"/>
-    <path class="mouth" d="M 72 130 Q 100 142 128 130"/>
-    <ellipse class="talkmouth" cx="100" cy="133" rx="14" ry="1" fill="var(--amber)" stroke="none" opacity="0"/>`;
-  return {svg,mouth:svg.querySelector('.mouth'),talk:svg.querySelector('.talkmouth'),eyes:svg.querySelectorAll('.eye')};
+  svg.innerHTML=`<circle class="ringline" cx="100" cy="100" r="92"/>
+    <circle class="halo" cx="100" cy="100" r="58" opacity="0.1"/>
+    <circle class="orb" cx="100" cy="100" r="46"/>`;
+  return {svg,orb:svg.querySelector('.orb'),halo:svg.querySelector('.halo')};
 }
 const bigFace=buildFace($('bigFace'));
 const faces=[bigFace];
-setInterval(()=>{
-  faces.forEach(f=>f.svg.classList.add('blink'));
-  setTimeout(()=>faces.forEach(f=>f.svg.classList.remove('blink')),130);
-},3800+Math.random()*2500);
-const MOUTH={
-  smile:"M 72 130 Q 100 142 128 130",
-  flat:"M 78 132 L 122 132",
-  think:"M 82 134 Q 100 128 118 134"
-};
-function setMouth(d){faces.forEach(f=>f.mouth.setAttribute('d',d));}
-function setEyesUp(u){faces.forEach(f=>f.eyes.forEach(e=>e.setAttribute('cy',u?76:82)));}
 
-/* ---- talk animation: driven by real word boundaries from TTS ----
-   mouthTarget is pushed up by each spoken word (via utterance
-   onboundary) and decays smoothly, so the mouth opens on words
-   and settles between them. rAF loop = no jitter. */
+/* ---- orb speech animation: radius + halo driven by real loudness ----
+   mouthTarget is pushed by audio amplitude (or word boundaries on the
+   browser voice) and decays smoothly; rAF loop = no jitter. */
 let mouthLevel=0, mouthTarget=0, talkRAF=null;
 function talkPulse(strength){ mouthTarget=Math.min(1, strength); }
 function talkLoop(){
-  /* ease toward target, then let target decay */
-  mouthLevel += (mouthTarget - mouthLevel) * 0.35;
-  mouthTarget *= 0.82;
-  const ry = 1 + mouthLevel * 13;          /* 1 → 14 */
-  const rx = 14 - mouthLevel * 3;          /* narrows slightly as it opens */
+  mouthLevel += (mouthTarget - mouthLevel) * 0.3;
+  mouthTarget *= 0.86;
+  const r    = 44 + mouthLevel * 16;   /* orb swells with the voice */
+  const hr   = 56 + mouthLevel * 30;   /* halo swells further */
+  const hop  = 0.08 + mouthLevel * 0.3;
   faces.forEach(f=>{
-    f.talk.setAttribute('ry', ry.toFixed(2));
-    f.talk.setAttribute('rx', rx.toFixed(2));
+    f.orb.setAttribute('r', r.toFixed(2));
+    f.halo.setAttribute('r', hr.toFixed(2));
+    f.halo.setAttribute('opacity', hop.toFixed(3));
   });
   talkRAF=requestAnimationFrame(talkLoop);
 }
 function startTalking(){
   stopTalking();
-  faces.forEach(f=>{f.mouth.style.opacity='0';f.talk.setAttribute('opacity','1');});
-  mouthLevel=0;mouthTarget=0.6; /* small initial opening */
+  faces.forEach(f=>f.svg.classList.remove('thinking','idlebreathe'));
+  mouthLevel=0;mouthTarget=0.4;
   talkRAF=requestAnimationFrame(talkLoop);
 }
 function stopTalking(){
   if(talkRAF){cancelAnimationFrame(talkRAF);talkRAF=null;}
-  faces.forEach(f=>{f.mouth.style.opacity='1';f.talk.setAttribute('opacity','0');});
   mouthLevel=0;mouthTarget=0;
-  setMouth(MOUTH.smile);setEyesUp(false);
+  faces.forEach(f=>{
+    f.orb.setAttribute('r','46');
+    f.halo.setAttribute('r','58');
+    f.halo.setAttribute('opacity','0.1');
+  });
+}
+function setFaceMode(mode){ /* 'listen' | 'think' | 'speak' | 'idle' */
+  faces.forEach(f=>{
+    f.svg.classList.toggle('thinking',mode==='think');
+    f.svg.classList.toggle('idlebreathe',mode==='listen'||mode==='idle');
+  });
+  if(mode!=='speak')stopTalking();
 }
 
 /* ========= conversation state ========= */
@@ -546,9 +545,9 @@ function setState(s){
   $('page-face').classList.toggle('listening',s==='listening');
   const L={listening:da()?'Lytter…':'Listening…',thinking:da()?'Tænker…':'Thinking…',speaking:da()?'Taler':'Speaking'};
   $('stateLabel').textContent=L[s]||'';
-  if(s==='listening'){setMouth(MOUTH.flat);setEyesUp(false);}
-  else if(s==='thinking'){setMouth(MOUTH.think);setEyesUp(true);}
-  else if(s==='speaking'){setEyesUp(false);startTalking();}
+  if(s==='listening')setFaceMode('listen');
+  else if(s==='thinking')setFaceMode('think');
+  else if(s==='speaking')startTalking();
   else stopTalking();
 }
 
@@ -1170,18 +1169,6 @@ function openSettings(){
   $('f-wxdur').value=cfg.wxDur;$('f-spid').value=cfg.spClientId;
   $('f-elkey').value=cfg.elKey;$('f-elvoice').value=cfg.elVoice;
   $('f-theme').value=cfg.theme;
-  /* populate voice list for the selected language */
-  const vsel=$('f-voice');
-  vsel.innerHTML='<option value="">Auto (best available)</option>';
-  loadVoices();
-  voices.filter(v=>v.lang.replace('_','-').startsWith(cfg.lang.slice(0,2)))
-    .forEach(v=>{
-      const o=document.createElement('option');
-      o.value=v.name;o.textContent=v.name;
-      vsel.appendChild(o);
-    });
-  vsel.value=store.get('voice_name','');
-  if(vsel.value!==store.get('voice_name',''))vsel.value='';
   $('f-waves').checked=cfg.wavesOn;
   $('f-wake').checked=cfg.wakeOn;
   $('f-name').value=cfg.name;
@@ -1199,7 +1186,6 @@ $('saveSet').addEventListener('click',()=>{
   store.set('wx_dur',$('f-wxdur').value.trim());
   applyTheme($('f-theme').value);
   applyWaves($('f-waves').checked);
-  store.set('voice_name',$('f-voice').value);
   store.set('el_key',$('f-elkey').value.trim());
   store.set('el_voice',$('f-elvoice').value.trim()||'21m00Tcm4TlvDq8ikWAM');
   store.set('sp_client_id',$('f-spid').value.trim());
