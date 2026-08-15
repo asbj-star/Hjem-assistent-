@@ -753,14 +753,17 @@ async function ask(question){
     :`Your name is ${cfg.name}, a home voice assistant. `)
     +`PERSONALITY: ${cfg.persona} `
     +(da()
-    ?"Svar altid på dansk, i naturligt talesprog — ingen markdown, ingen punktopstillinger. Hold svar på 1-3 sætninger medmindre der bedes om mere. VIGTIGT: Hvis brugeren beder om at se vejret, spørger om vejret eller vejrudsigten, skal dit svar starte med præcis tokenet [WEATHER] efterfulgt af et mellemrum og et kort, naturligt svar (fx \"Helt sikkert — her er vejret.\"). Brug aldrig tokenet ellers."
-    :"Answer in plain spoken English — no markdown, no lists. Keep replies to 1-3 sentences unless asked for more. IMPORTANT: If the user asks to see the weather or asks about the weather or forecast, start your reply with the exact token [WEATHER] followed by a space and a short natural reply (e.g. \"Sure — here's the weather.\"). Never use the token otherwise.")
+    ?"Svar altid på dansk, i naturligt talesprog — ingen markdown, ingen punktopstillinger. Hold normale svar korte (1-3 sætninger). MEN hvis brugeren beder om en historie, et eventyr, en forklaring, en anbefaling eller noget der i sagens natur kræver længde, så giv et fyldigt svar uden at holde igen — fortæl fx et helt H.C. Andersen-eventyr hvis der bliver bedt om det. VIGTIGT: Hvis brugeren beder om at se vejret, spørger om vejret eller vejrudsigten, skal dit svar starte med præcis tokenet [WEATHER] efterfulgt af et mellemrum og et kort, naturligt svar (fx \"Helt sikkert — her er vejret.\"). Brug aldrig tokenet ellers."
+    :"Answer in plain spoken English — no markdown, no lists. Keep ordinary replies short (1-3 sentences). BUT if the user asks for a story, a fairy tale, an explanation, a recommendation, or anything that inherently needs length, give a full rich answer without holding back — e.g. tell an entire Hans Christian Andersen tale if asked. IMPORTANT: If the user asks to see the weather or asks about the weather or forecast, start your reply with the exact token [WEATHER] followed by a space and a short natural reply (e.g. \"Sure — here's the weather.\"). Never use the token otherwise.")
     +(da()
     ?` TEMAER: Skærmen har temaer: ${Object.entries(THEMES).map(([k,v])=>k+' ('+v+')').join(', ')}. Temaet "jp50" tales ofte som et nummer — "050"/"halvtreds"/"tema 50" betyder jp50. Hvis brugeren beder om at skifte tema, udseende eller farver, skal dit svar starte med præcis [THEME:tema-id] efterfulgt af et mellemrum. Vælg det tema der bedst matcher ønsket. BØLGER: Skærmen kan også vise en blød, sløret bølgeeffekt i temaets accentfarve. Hvis brugeren beder om at slå bølger/wave-effekten til eller fra (fx "slå bølgerne til", "fjern bølgerne", "vis bølger"), skal svaret indeholde tokenet [WAVES:on] eller [WAVES:off]. Du kan kombinere flere tokens i træk i starten af samme svar hvis brugeren beder om flere ting på én gang, fx [THEME:jp50][WAVES:on] Så er det gjort! — efterfulgt af en kort naturlig bekræftelse. Brug aldrig tokens ellers.`
     :` THEMES: The screen has themes: ${Object.entries(THEMES).map(([k,v])=>k+' ('+v+')').join(', ')}. The theme "jp50" is often spoken as a number — "050"/"fifty"/"theme 50" means jp50. If the user asks to change theme, look or colours, start your reply with exactly [THEME:theme-id]. Pick the best-matching theme. WAVES: The screen can also show a soft, blurred wave effect tinted in the theme's accent colour. If the user asks to turn waves on or off (e.g. "turn on the waves", "remove the waves"), include the token [WAVES:on] or [WAVES:off]. You can chain multiple tokens at the start of one reply if the user asks for several things at once, e.g. [THEME:jp50][WAVES:on] Done! — followed by a short natural confirmation. Never use tokens otherwise.`)
     +(da()
     ?` MUSIK: Du kan styre Spotify. Hvis brugeren beder om at afspille en bestemt sang, kunstner eller album, skal svaret starte med [PLAY:søgetekst] — fx [PLAY:Tame Impala Let It Happen]. Hvis brugeren beder om en playliste, brug [PLAYLIST:navn] — fx [PLAYLIST:fokus]. Til simple kommandoer brug [MUSIC:pause], [MUSIC:resume], [MUSIC:next] eller [MUSIC:prev]. Efter tokenet skriver du en kort naturlig bekræftelse. Brug aldrig musik-tokens hvis brugeren blot spørger om hvad der spiller — det kan du se herunder.`
     :` MUSIC: You can control Spotify. If the user asks to play a specific song, artist or album, start your reply with [PLAY:search text] — e.g. [PLAY:Tame Impala Let It Happen]. For a playlist use [PLAYLIST:name] — e.g. [PLAYLIST:focus]. For simple commands use [MUSIC:pause], [MUSIC:resume], [MUSIC:next] or [MUSIC:prev]. Follow the token with a short natural confirmation. Never use music tokens if the user is merely asking what is currently playing — that information is given below.`)
+    +(da()
+    ?` VEJR ANDRE STEDER: Hvis brugeren spørger om vejret et andet sted end ${cfg.city} (fx "hvordan er vejret i London?"), skal dit svar starte med [LOOKUP:bynavn] og INTET andet — så henter systemet vejret og spørger dig igen med data. Brug kun dette til andre byer, ikke til ${cfg.city}.`
+    :` WEATHER ELSEWHERE: If the user asks about the weather somewhere other than ${cfg.city} (e.g. "what's the weather in London?"), reply with [LOOKUP:cityname] and NOTHING else — the system will fetch that weather and ask you again with the data. Only use this for other cities, never for ${cfg.city}.`)
     +(da()
     ?` AFSLUTNING: Hvis brugeren indikerer at samtalen er slut (fx "det var det", "tak", "godnat", "nej tak", "ikke mere"), skal svaret starte med tokenet [END] efterfulgt af en meget kort afsked (fx "Udmærket, hr."). `
     :` ENDING: If the user indicates the conversation is over (e.g. "that's it", "thank you", "goodnight", "no thanks", "nothing else"), start your reply with the token [END] followed by a very brief farewell (e.g. "Very good, sir."). `)
@@ -807,7 +810,7 @@ async function streamAsk(sys,headers,model){
   const q=[];                 /* ordered sentence queue with per-item prefetch */
   let playing=false,streamDone=false,finished=false;
   let weatherTriggered=false,buffer='',leading=true;
-  let musicGate=null,suppressText=false,endAfter=false;
+  let musicGate=null,suppressText=false,endAfter=false,lookupCity=null;
   pipeActive=true;pipeSpoken='';pipePushed=false;
 
   const finishIfDone=()=>{
@@ -863,6 +866,7 @@ async function streamAsk(sys,headers,model){
       else if(m=tok.match(/^\[WAVES:(on|off)\]$/i))applyWaves(m[1].toLowerCase()==='on');
       else if(/^\[WEATHER\]$/i.test(tok)){weatherTriggered=true;conversationActive=false;showWeatherPage();render();}
       else if(/^\[END\]$/i.test(tok))endAfter=true;
+      else if(m=tok.match(/^\[LOOKUP:([^\]]+)\]$/i)){lookupCity=m[1].trim();suppressText=true;}
       else if(m=tok.match(/^\[PLAY:([^\]]+)\]$/i))musicGate=spotifyPlayRequest(m[1].trim(),'track');
       else if(m=tok.match(/^\[PLAYLIST:([^\]]+)\]$/i))musicGate=spotifyPlayRequest(m[1].trim(),'playlist');
       else if(m=tok.match(/^\[MUSIC:(pause|resume|next|prev)\]$/i))musicGate=spotifySimpleCommand(m[1].toLowerCase());
@@ -916,6 +920,12 @@ async function streamAsk(sys,headers,model){
       const err=await musicGate;musicGate=null;
       if(err){pipeSpoken=err;await speakChunk({text:err,blobP:cfg.elKey?elevenFetch(err):null},myGen);}
     }
+    if(lookupCity){
+      pipeActive=false;pipePushed=true;      /* this turn produced no speech */
+      history.pop();                          /* drop the token-only reply slot */
+      await doCityLookup(lookupCity,sys,headers,model);
+      return;
+    }
     streamDone=true;
     finishIfDone();
   }catch(err){
@@ -924,6 +934,42 @@ async function streamAsk(sys,headers,model){
     pipeActive=false;
     if(myGen===genId){toast('Claude API: '+err.message);endConversation();}
   }
+}
+
+/* ---- look up weather for another city, then re-ask with the data ---- */
+async function doCityLookup(city,sys,headers,model){
+  let info='';
+  try{
+    const g=await fetch('https://geocoding-api.open-meteo.com/v1/search?count=1&name='+encodeURIComponent(city));
+    const gd=await g.json();
+    const hit=gd.results&&gd.results[0];
+    if(!hit){
+      info=(da()?`Byen "${city}" blev ikke fundet.`:`The city "${city}" could not be found.`);
+    }else{
+      const r=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${hit.latitude}&longitude=${hit.longitude}`+
+        `&current=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=3&timezone=auto`);
+      const w=await r.json();
+      const cond=(da()?(WMO[w.current.weather_code]||['?'])[0]:(WMO_EN[w.current.weather_code]||'?'));
+      let days='';
+      if(w.daily&&w.daily.time){
+        days=w.daily.time.map((t,i)=>{
+          const dn=new Date(t).toLocaleDateString(da()?'da-DK':'en-GB',{weekday:'long'});
+          const c2=(da()?(WMO[w.daily.weather_code[i]]||['?'])[0]:(WMO_EN[w.daily.weather_code[i]]||'?'));
+          return `${dn}: ${Math.round(w.daily.temperature_2m_min[i])}–${Math.round(w.daily.temperature_2m_max[i])}°C, ${c2}`;
+        }).join('; ');
+      }
+      const place=hit.name+(hit.country?', '+hit.country:'');
+      info=(da()
+        ?`Vejrdata for ${place}: nu ${Math.round(w.current.temperature_2m)}°C, ${cond}. Udsigt — ${days}.`
+        :`Weather data for ${place}: currently ${Math.round(w.current.temperature_2m)}°C, ${cond}. Forecast — ${days}.`);
+    }
+  }catch(e){
+    info=(da()?`Kunne ikke hente vejret for "${city}".`:`Could not fetch the weather for "${city}".`);
+  }
+  history.push({role:'user',content:(da()
+    ?`[System: ${info} Svar nu brugeren naturligt ud fra disse data. Brug ikke flere tokens.]`
+    :`[System: ${info} Now answer the user naturally using this data. Do not use any more tokens.]`)});
+  await streamAsk(sys,headers,model);
 }
 
 /* ---- ElevenLabs fetch: returns a blob promise, errors surfaced ---- */
