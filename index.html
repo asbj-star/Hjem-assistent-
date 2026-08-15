@@ -57,6 +57,22 @@ body[data-theme="nightcall"]{
   --clock-glow:0 0 20px rgba(255,79,58,.4),0 0 50px rgba(255,79,58,.15);
 }
 
+/* night — locked auto-only theme: old BMW cabin amber */
+body[data-theme="night"]{
+  --bg:#000000; --panel:#0b0603; --line:#1c1108;
+  --text:#c8863c; --muted:#5c3d1c;
+  --amber:#e8901f; --amber-soft:rgba(232,144,31,.10);
+  --clock-font:'Archivo Black',sans-serif;
+  --clock-weight:400; --clock-stroke:0px;
+  --clock-glow:0 0 26px rgba(232,144,31,.30);
+}
+body[data-theme="night"]::before{
+  background:radial-gradient(120% 90% at 50% 40%, transparent 40%, rgba(0,0,0,.75) 100%);
+}
+/* whole screen dimmed at night */
+body.night-dim{filter:brightness(.55)}
+body.night-dim #waveCanvas,body.night-dim #waveLayer{opacity:0!important}
+
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%;overflow:hidden}
 body{background:var(--bg);color:var(--text);font-family:'Outfit',system-ui,sans-serif;font-weight:300;
@@ -132,6 +148,17 @@ body.waves-on:not([data-theme="nightcall"]) #waveCanvas{opacity:.3}
 .wx-h .i{font-size:22px;margin:5px 0}
 .wx-h .t{font-size:19px;font-weight:400}
 #w-timer{position:absolute;bottom:0;left:0;height:3px;background:var(--amber);width:100%;transform-origin:left}
+
+/* TIMER */
+#page-timer{gap:10px}
+#t-label{color:var(--amber);letter-spacing:.3em;text-transform:uppercase;font-size:clamp(13px,1.8vw,17px)}
+#t-time{font-family:var(--clock-font);font-weight:var(--clock-weight);color:var(--amber);
+  -webkit-text-stroke:var(--clock-stroke) currentColor;paint-order:stroke fill;
+  font-size:clamp(80px,20vw,240px);line-height:1;font-variant-numeric:tabular-nums;
+  text-shadow:var(--clock-glow)}
+#t-sub{color:var(--muted);font-size:clamp(14px,2vw,20px);letter-spacing:.1em}
+#page-timer.ringing #t-time{animation:ringPulse .8s ease-in-out infinite}
+@keyframes ringPulse{0%,100%{opacity:1}50%{opacity:.35}}
 
 /* SPOTIFY */
 #page-spotify{gap:0}
@@ -221,6 +248,13 @@ body.waves-on:not([data-theme="nightcall"]) #waveCanvas{opacity:.3}
   <div id="w-hours"></div>
   <div id="w-days"></div>
   <div id="w-timer"></div>
+</section>
+
+<!-- TIMER -->
+<section class="page" id="page-timer">
+  <div id="t-label">Timer</div>
+  <div id="t-time">00:00</div>
+  <div id="t-sub"></div>
 </section>
 
 <!-- SPOTIFY (auto while playing) -->
@@ -327,6 +361,26 @@ body.waves-on:not([data-theme="nightcall"]) #waveCanvas{opacity:.3}
       <div class="hint" style="margin-top:-8px">Also switchable by voice: “slå bølgerne til” / “fjern bølgerne”.</div>
     </div>
 
+    <div class="check">
+      <input type="checkbox" id="f-night">
+      <span>Nattilstand (dæmpet BMW-amber)</span>
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label>Nat starter (time)</label>
+        <input id="f-nightstart" type="number" min="0" max="23" placeholder="22">
+      </div>
+      <div class="field">
+        <label>Nat slutter (time)</label>
+        <input id="f-nightend" type="number" min="0" max="23" placeholder="7">
+      </div>
+    </div>
+
+    <div class="check">
+      <input type="checkbox" id="f-autoupdate">
+      <span>Auto-opdatér når en ny version er uploadet</span>
+    </div>
+
     <div class="field">
       <label>Weather page duration (seconds)</label>
       <input id="f-wxdur" type="number" min="5" max="300" placeholder="20">
@@ -382,6 +436,10 @@ const cfg={
   get persona(){return store.get('persona',"You are a distinguished English butler-valet of the old school — think Jeeves or a Bond-era gentleman's gentleman. Impeccably courteous, understated, unflappable. Address the user as 'sir' naturally within replies. Refined vocabulary, dry subtle wit, never obsequious, never casual slang. Deliver even mundane information with quiet elegance, e.g. 'The weather in your region is exceptional, sir — a slight breeze, and not a cloud to trouble you.' If replying in Danish, keep the same distinguished butler manner and use the formal 'De' form, addressing the user as 'hr.'");},
   get theme(){return store.get('theme','racing');},
   get wavesOn(){return store.get('waves_on','0')==='1';},
+  get nightOn(){return store.get('night_on','1')==='1';},
+  get nightStart(){return parseInt(store.get('night_start','22'));},
+  get nightEnd(){return parseInt(store.get('night_end','7'));},
+  get autoUpdate(){return store.get('auto_update','1')==='1';},
   get elKey(){return store.get('el_key','');},
   get elVoice(){return store.get('el_voice','21m00Tcm4TlvDq8ikWAM');},
   get wakeOn(){return store.get('wake_on','0')==='1';},
@@ -398,8 +456,8 @@ const THEMES={
 };
 function applyTheme(t){
   if(!THEMES[t])t='racing';
-  document.body.dataset.theme=t;
   store.set('theme',t);
+  if(!nightActive)document.body.dataset.theme=t;   /* night theme wins while active */
   syncWaveAnim();
 }
 function applyWaves(on){
@@ -407,6 +465,24 @@ function applyWaves(on){
   store.set('waves_on',on?'1':'0');
   syncWaveAnim();
 }
+
+/* ---- night mode: locked amber theme + dimming on a schedule ---- */
+let nightActive=false;
+function isNightNow(){
+  if(!cfg.nightOn)return false;
+  const h=new Date().getHours(),a=cfg.nightStart,b=cfg.nightEnd;
+  return a<b ? (h>=a&&h<b) : (h>=a||h<b);   /* handles wrapping past midnight */
+}
+function syncNight(){
+  const want=isNightNow();
+  if(want===nightActive)return;
+  nightActive=want;
+  document.body.classList.toggle('night-dim',want);
+  if(want){document.body.dataset.theme='night';}
+  else{document.body.dataset.theme=cfg.theme;}
+  syncWaveAnim();
+}
+setInterval(syncNight,30000);
 
 /* ---- flowing horizontal sine waves (all themes except nightcall) ---- */
 const waveCv=document.getElementById('waveCanvas');
@@ -443,7 +519,7 @@ function drawWaves(t){
   waveRAF=requestAnimationFrame(drawWaves);
 }
 function syncWaveAnim(){
-  const wantCanvas=cfg.wavesOn && document.body.dataset.theme!=='nightcall';
+  const wantCanvas=cfg.wavesOn && !nightActive && document.body.dataset.theme!=='nightcall';
   if(wantCanvas && !waveRAF){waveRAF=requestAnimationFrame(drawWaves);}
   if(!wantCanvas && waveRAF){cancelAnimationFrame(waveRAF);waveRAF=null;waveCtx.clearRect(0,0,waveCv.width,waveCv.height);}
 }
@@ -458,8 +534,10 @@ let weatherUntil=0;
 let spotifyPlaying=false;
 
 function currentPage(){
+  if(timerRinging) return 'timer';          /* a finished timer beats everything */
   if(conversationActive) return 'face';
   if(Date.now()<weatherUntil) return 'weather';
+  if(timerEnd&&timerRemaining()>0) return 'timer';
   if(spotifyPlaying) return 'spotify';
   return 'clock';
 }
@@ -481,6 +559,65 @@ function showWeatherPage(){
     bar.style.transform='scaleX(0)';
   });});
 }
+
+/* ========= timer =========
+   One timer at a time. Shows a countdown page while running,
+   flashes and chimes when done until dismissed. */
+let timerEnd=0,timerLabel='',timerRinging=false,timerChime=null;
+function startTimer(seconds,label){
+  timerEnd=Date.now()+seconds*1000;
+  timerLabel=label||'';
+  timerRinging=false;
+  stopChime();
+  render();
+}
+function cancelTimer(){
+  timerEnd=0;timerRinging=false;stopChime();render();
+}
+function timerRemaining(){
+  return Math.max(0,Math.ceil((timerEnd-Date.now())/1000));
+}
+function fmtDur(sec){
+  const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s2=sec%60;
+  return h>0 ? `${h}:${String(m).padStart(2,'0')}:${String(s2).padStart(2,'0')}`
+             : `${String(m).padStart(2,'0')}:${String(s2).padStart(2,'0')}`;
+}
+function stopChime(){if(timerChime){clearInterval(timerChime);timerChime=null;}}
+function playChime(){
+  try{
+    audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
+    if(audioCtx.state==='suspended')audioCtx.resume();
+    const beep=(t,f)=>{
+      const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+      o.type='sine';o.frequency.value=f;
+      g.gain.setValueAtTime(0.0001,t);
+      g.gain.exponentialRampToValueAtTime(0.35,t+0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001,t+0.45);
+      o.connect(g);g.connect(audioCtx.destination);
+      o.start(t);o.stop(t+0.5);
+    };
+    const now=audioCtx.currentTime;
+    beep(now,880);beep(now+0.28,1175);
+  }catch(e){}
+}
+function tickTimer(){
+  if(!timerEnd)return;
+  const left=timerRemaining();
+  if(left>0){
+    $('t-time').textContent=fmtDur(left);
+    $('t-sub').textContent=timerLabel;
+    $('page-timer').classList.remove('ringing');
+  }else if(!timerRinging){
+    timerRinging=true;
+    $('t-time').textContent=da()?'FÆRDIG':'DONE';
+    $('t-sub').textContent=timerLabel;
+    $('page-timer').classList.add('ringing');
+    playChime();
+    timerChime=setInterval(playChime,2200);
+    render();
+  }
+}
+setInterval(tickTimer,250);
 
 /* ========= faces ========= */
 function buildFace(svg){
@@ -765,6 +902,9 @@ async function ask(question){
     ?` VEJR ANDRE STEDER: Hvis brugeren spørger om vejret et andet sted end ${cfg.city} (fx "hvordan er vejret i London?"), skal dit svar starte med [LOOKUP:bynavn] og INTET andet — så henter systemet vejret og spørger dig igen med data. Brug kun dette til andre byer, ikke til ${cfg.city}.`
     :` WEATHER ELSEWHERE: If the user asks about the weather somewhere other than ${cfg.city} (e.g. "what's the weather in London?"), reply with [LOOKUP:cityname] and NOTHING else — the system will fetch that weather and ask you again with the data. Only use this for other cities, never for ${cfg.city}.`)
     +(da()
+    ?` TIMER: Du kan sætte en timer. Hvis brugeren beder om det (fx "sæt en timer på ti minutter", "kald mig om et kvarter"), skal svaret starte med [TIMER:sekunder:etiket] — fx [TIMER:600:æg] eller [TIMER:900:] hvis der ingen etiket er. Hvis brugeren vil annullere, brug [TIMER:cancel:]. Efter tokenet siger du en kort bekræftelse.`
+    :` TIMER: You can set a timer. If the user asks (e.g. "set a timer for ten minutes", "remind me in a quarter of an hour"), start your reply with [TIMER:seconds:label] — e.g. [TIMER:600:eggs] or [TIMER:900:] when there is no label. To cancel, use [TIMER:cancel:]. Follow the token with a short confirmation.`)
+    +(da()
     ?` AFSLUTNING: Hvis brugeren indikerer at samtalen er slut (fx "det var det", "tak", "godnat", "nej tak", "ikke mere"), skal svaret starte med tokenet [END] efterfulgt af en meget kort afsked (fx "Udmærket, hr."). `
     :` ENDING: If the user indicates the conversation is over (e.g. "that's it", "thank you", "goodnight", "no thanks", "nothing else"), start your reply with the token [END] followed by a very brief farewell (e.g. "Very good, sir."). `)
     +nowPlayingForPrompt()
@@ -867,6 +1007,10 @@ async function streamAsk(sys,headers,model){
       else if(/^\[WEATHER\]$/i.test(tok)){weatherTriggered=true;conversationActive=false;showWeatherPage();render();}
       else if(/^\[END\]$/i.test(tok))endAfter=true;
       else if(m=tok.match(/^\[LOOKUP:([^\]]+)\]$/i)){lookupCity=m[1].trim();suppressText=true;}
+      else if(m=tok.match(/^\[TIMER:([^:\]]*):([^\]]*)\]$/i)){
+        if(/^cancel$/i.test(m[1]))cancelTimer();
+        else{const secs=parseInt(m[1]);if(secs>0)startTimer(secs,m[2].trim());}
+      }
       else if(m=tok.match(/^\[PLAY:([^\]]+)\]$/i))musicGate=spotifyPlayRequest(m[1].trim(),'track');
       else if(m=tok.match(/^\[PLAYLIST:([^\]]+)\]$/i))musicGate=spotifyPlayRequest(m[1].trim(),'playlist');
       else if(m=tok.match(/^\[MUSIC:(pause|resume|next|prev)\]$/i))musicGate=spotifySimpleCommand(m[1].toLowerCase());
@@ -1116,6 +1260,7 @@ function onUp(e){
   clearTimeout(pressTimer);
   if(longPressed)return;
   if(e.target.closest('#settings'))return;
+  if(timerRinging){cancelTimer();return;}   /* tap silences a finished timer */
   const page=currentPage();
   if(page==='face'){
     if(e.target.closest('#faceWrap')){
@@ -1350,6 +1495,10 @@ function openSettings(){
   $('f-elkey').value=cfg.elKey;$('f-elvoice').value=cfg.elVoice;
   $('f-theme').value=cfg.theme;
   $('f-waves').checked=cfg.wavesOn;
+  $('f-night').checked=cfg.nightOn;
+  $('f-nightstart').value=cfg.nightStart;
+  $('f-nightend').value=cfg.nightEnd;
+  $('f-autoupdate').checked=cfg.autoUpdate;
   $('f-wake').checked=cfg.wakeOn;
   $('f-name').value=cfg.name;
   $('f-persona').value=cfg.persona;
@@ -1367,6 +1516,11 @@ $('saveSet').addEventListener('click',()=>{
   store.set('wx_dur',$('f-wxdur').value.trim());
   applyTheme($('f-theme').value);
   applyWaves($('f-waves').checked);
+  store.set('night_on',$('f-night').checked?'1':'0');
+  store.set('night_start',$('f-nightstart').value.trim()||'22');
+  store.set('night_end',$('f-nightend').value.trim()||'7');
+  store.set('auto_update',$('f-autoupdate').checked?'1':'0');
+  nightActive=!nightActive;syncNight();   /* force re-evaluation */
   store.set('el_key',$('f-elkey').value.trim());
   store.set('el_voice',$('f-elvoice').value.trim()||'21m00Tcm4TlvDq8ikWAM');
   store.set('sp_client_id',$('f-spid').value.trim());
@@ -1427,6 +1581,22 @@ $('spAuthBtn').addEventListener('click',()=>{
 });
 /* fullscreen + wake lock are requested on the first tap (see onUp) */
 
+/* ========= auto-update: reload when a new version is published ========= */
+let versionSeen=null;
+async function checkForUpdate(){
+  if(!cfg.autoUpdate)return;
+  if(conversationActive||timerEnd||state!=='idle')return;   /* never interrupt */
+  try{
+    const r=await fetch(location.pathname+'?v='+Date.now(),{method:'HEAD',cache:'no-store'});
+    const tag=r.headers.get('etag')||r.headers.get('last-modified');
+    if(!tag)return;
+    if(versionSeen===null){versionSeen=tag;return;}
+    if(tag!==versionSeen)location.reload(true);
+  }catch(e){}
+}
+setInterval(checkForUpdate,180000);   /* every 3 minutes */
+setTimeout(checkForUpdate,10000);
+
 /* ========= boot ========= */
 /* single-instance guard: if the app is already open in another tab,
    this tab disables its voice features so they can't fight over the mic */
@@ -1443,6 +1613,7 @@ if(navigator.locks){
 }
 applyTheme(cfg.theme);
 applyWaves(cfg.wavesOn);
+syncNight();
 wakeWanted=cfg.wakeOn;
 updateWakeBtn();
 $('wakeDotLabel').textContent=(da()?'Lytter efter “hej ':'Listening for “hey ')+cfg.name+'”';
