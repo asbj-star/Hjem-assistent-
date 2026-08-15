@@ -544,6 +544,7 @@ function setState(s){
   else if(s==='thinking')setFaceMode('think');
   else if(s==='speaking')startTalking();
   else stopTalking();
+  if(s==='speaking')startBarge();else stopBarge();
 }
 
 /* =========================================================
@@ -617,6 +618,54 @@ function safeStartRecog(r,onFail){
 }
 
 /* =========================================================
+   BARGE-IN — while speaking, listen for the wake name; hearing
+   it stops all talking and goes straight to listening.
+   Active only while state==='speaking' and wake word is enabled.
+   ========================================================= */
+let bargeRec=null,bargeActive=false,bargeTimer=null;
+function scheduleBarge(ms){clearTimeout(bargeTimer);bargeTimer=setTimeout(startBarge,ms||300);}
+function startBarge(){
+  if(!SR||!wakeWanted||bargeActive||state!=='speaking')return;
+  try{bargeRec&&bargeRec.abort();}catch(e){}   /* never two instances */
+  bargeActive=true;
+  bargeRec=new SR();
+  bargeRec.lang=cfg.lang;
+  bargeRec.continuous=true;
+  bargeRec.interimResults=true;
+  bargeRec.onresult=ev=>{
+    /* echo guard: if the sentence HE is currently saying contains the
+       wake word, the mic is likely hearing the speakers — ignore */
+    if(wakeMatch(currentSpeakText))return;
+    for(let i=ev.resultIndex;i<ev.results.length;i++){
+      if(wakeMatch(ev.results[i][0].transcript)){
+        stopBarge();
+        interruptToListen();
+        return;
+      }
+    }
+  };
+  bargeRec.onerror=()=>{bargeActive=false;};
+  bargeRec.onend=()=>{
+    bargeActive=false;
+    if(state==='speaking')scheduleBarge(300);
+  };
+  try{bargeRec.start();}catch(e){bargeActive=false;scheduleBarge(300);}
+}
+function stopBarge(){
+  clearTimeout(bargeTimer);
+  bargeActive=false;
+  try{bargeRec&&bargeRec.abort();}catch(e){}
+}
+function interruptToListen(){
+  genId++;                               /* kills the stream + audio queue */
+  stopBarge();
+  try{if(currentAudio){currentAudio.pause();currentAudio=null;}}catch(e){}
+  window.speechSynthesis&&speechSynthesis.cancel();
+  clearTimeout(followTimer);
+  setTimeout(listenOnce,250);            /* give the mic a beat to free up */
+}
+
+/* =========================================================
    CONVERSATION — listen → think → speak → follow-up window
    ========================================================= */
 let recog=null, followTimer=null;
@@ -632,6 +681,7 @@ function startConversation(){
 }
 function listenOnce(attempt){
   attempt=attempt||0;
+  stopBarge();               /* barge listener must release the mic first */
   recog=new SR();
   recog.lang=cfg.lang;recog.interimResults=false;recog.maxAlternatives=1;
   let finalText='';
@@ -739,7 +789,7 @@ async function ask(question){
 let voices=[];
 function loadVoices(){voices=speechSynthesis.getVoices();}
 if('speechSynthesis' in window){loadVoices();speechSynthesis.onvoiceschanged=loadVoices;}
-let audioCtx=null,currentAudio=null,genId=0;
+let audioCtx=null,currentAudio=null,genId=0,currentSpeakText='';
 
 async function streamAsk(sys,headers,model){
   const myGen=++genId;
@@ -882,6 +932,7 @@ function elevenFetch(text){
 async function speakChunk(item,myGen){
   if(myGen!==genId)return;
   if(state!=='speaking')setState('speaking');
+  currentSpeakText=item.text||'';
   if(cfg.elKey){
     let blob;
     try{blob=await item.blobP;}
@@ -965,6 +1016,7 @@ function pickVoice(){
 function followUp(attempt){
   if(!conversationActive)return;
   attempt=attempt||0;
+  stopBarge();               /* barge listener must release the mic first */
   setState('listening');
   recog=new SR();
   recog.lang=cfg.lang;recog.interimResults=false;
@@ -1005,8 +1057,12 @@ function onUp(e){
   if(e.target.closest('#settings'))return;
   const page=currentPage();
   if(page==='face'){
-    /* tap outside the face ends the conversation */
-    if(!e.target.closest('#faceWrap'))endConversation();
+    if(e.target.closest('#faceWrap')){
+      /* tap the orb while it talks = cut in and listen */
+      if(state==='speaking')interruptToListen();
+      return;
+    }
+    endConversation();
     return;
   }
   /* first user gesture: quietly try fullscreen + wake lock */
@@ -1311,6 +1367,19 @@ $('spAuthBtn').addEventListener('click',()=>{
 /* fullscreen + wake lock are requested on the first tap (see onUp) */
 
 /* ========= boot ========= */
+/* single-instance guard: if the app is already open in another tab,
+   this tab disables its voice features so they can't fight over the mic */
+if(navigator.locks){
+  navigator.locks.request('hjem-primary',{ifAvailable:true},lock=>{
+    if(!lock){
+      wakeWanted=false;
+      stopWake();
+      toast(da()?'Appen er allerede åben i en anden fane — stemme er slået fra her.':'App is already open in another tab — voice is disabled here.');
+      return;
+    }
+    return new Promise(()=>{});   /* hold the lock for this tab's lifetime */
+  });
+}
 applyTheme(cfg.theme);
 applyWaves(cfg.wavesOn);
 wakeWanted=cfg.wakeOn;
