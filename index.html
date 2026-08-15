@@ -174,9 +174,10 @@ body.waves-on:not([data-theme="nightcall"]) #waveCanvas{opacity:.3}
 #settingsCard .sub{color:var(--muted);font-size:13px;margin-bottom:22px}
 .field{margin-bottom:18px}
 .field label{display:block;color:var(--muted);font-size:12px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:7px}
-.field input,.field select{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:10px;
+.field input,.field select,.field textarea{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:10px;
   color:var(--text);padding:11px 13px;font-family:inherit;font-size:15px}
-.field input:focus,.field select:focus{outline:none;border-color:var(--amber)}
+.field textarea{resize:vertical;line-height:1.5}
+.field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--amber)}
 .field .hint{color:var(--muted);font-size:12px;margin-top:6px;line-height:1.5}
 .row2{display:flex;gap:12px}
 .row2 .field{flex:1}
@@ -284,6 +285,12 @@ body.waves-on:not([data-theme="nightcall"]) #waveCanvas{opacity:.3}
       <div class="hint">Find IDs in the elevenlabs.io voice library. Default is “Rachel”.</div>
     </div>
 
+    <div class="field">
+      <label>Personlighed</label>
+      <textarea id="f-persona" rows="5"></textarea>
+      <div class="hint">Describe how the assistant speaks and behaves — freely editable. Delete everything and save to restore the default butler.</div>
+    </div>
+
     <div class="check">
       <input type="checkbox" id="f-wake">
       <span>Wake word aktiv</span>
@@ -365,6 +372,7 @@ const cfg={
   get wxDur(){return Math.max(5,parseInt(store.get('wx_dur','20'))||20);},
   get spClientId(){return store.get('sp_client_id','');},
   get name(){return store.get('assistant_name','Odin');},
+  get persona(){return store.get('persona',"You are a distinguished English butler-valet of the old school — think Jeeves or a Bond-era gentleman's gentleman. Impeccably courteous, understated, unflappable. Address the user as 'sir' naturally within replies. Refined vocabulary, dry subtle wit, never obsequious, never casual slang. Deliver even mundane information with quiet elegance, e.g. 'The weather in your region is exceptional, sir — a slight breeze, and not a cloud to trouble you.' If replying in Danish, keep the same distinguished butler manner and use the formal 'De' form, addressing the user as 'hr.'");},
   get theme(){return store.get('theme','racing');},
   get wavesOn(){return store.get('waves_on','0')==='1';},
   get elKey(){return store.get('el_key','');},
@@ -642,8 +650,9 @@ async function ask(question){
   setState('thinking');
 
   const sys=(da()
-    ?`Du hedder ${cfg.name} og er en venlig stemmeassistent i et hjem. `
-    :`Your name is ${cfg.name}, a friendly home voice assistant. `)
+    ?`Du hedder ${cfg.name} og er en stemmeassistent i et hjem. `
+    :`Your name is ${cfg.name}, a home voice assistant. `)
+    +`PERSONALITY: ${cfg.persona} `
     +(da()
     ?"Svar altid på dansk, i naturligt talesprog — ingen markdown, ingen punktopstillinger. Hold svar på 1-3 sætninger medmindre der bedes om mere. VIGTIGT: Hvis brugeren beder om at se vejret, spørger om vejret eller vejrudsigten, skal dit svar starte med præcis tokenet [WEATHER] efterfulgt af et mellemrum og et kort, naturligt svar (fx \"Helt sikkert — her er vejret.\"). Brug aldrig tokenet ellers."
     :"Answer in plain spoken English — no markdown, no lists. Keep replies to 1-3 sentences unless asked for more. IMPORTANT: If the user asks to see the weather or asks about the weather or forecast, start your reply with the exact token [WEATHER] followed by a space and a short natural reply (e.g. \"Sure — here's the weather.\"). Never use the token otherwise.")
@@ -1152,6 +1161,7 @@ function openSettings(){
   $('f-waves').checked=cfg.wavesOn;
   $('f-wake').checked=cfg.wakeOn;
   $('f-name').value=cfg.name;
+  $('f-persona').value=cfg.persona;
   $('f-wakewords').value=store.get('wake_words',cfg.name.toLowerCase());
   $('settings').classList.add('on');
 }
@@ -1170,6 +1180,8 @@ $('saveSet').addEventListener('click',()=>{
   store.set('el_voice',$('f-elvoice').value.trim()||'21m00Tcm4TlvDq8ikWAM');
   store.set('sp_client_id',$('f-spid').value.trim());
   store.set('assistant_name',$('f-name').value.trim()||'Odin');
+  store.set('persona',$('f-persona').value.trim());
+  if(!$('f-persona').value.trim()){try{localStorage.removeItem('persona');}catch(e){delete mem['persona'];}}
   store.set('wake_words',$('f-wakewords').value);
   store.set('wake_on',$('f-wake').checked?'1':'0');
   $('wakeDotLabel').textContent=(da()?'Lytter efter “hej ':'Listening for “hey ')+cfg.name+'”';
