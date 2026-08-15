@@ -657,6 +657,7 @@ function stopBarge(){
   try{bargeRec&&bargeRec.abort();}catch(e){}
 }
 function interruptToListen(){
+  flushInterruptedTurn();                /* record what he managed to say */
   genId++;                               /* kills the stream + audio queue */
   stopBarge();
   try{if(currentAudio){currentAudio.pause();currentAudio=null;}}catch(e){}
@@ -704,6 +705,7 @@ function listenOnce(attempt){
   safeStartRecog(recog,endConversation);
 }
 function endConversation(){
+  flushInterruptedTurn();                /* close any half-finished turn */
   genId++; /* invalidates any in-flight stream + audio queue */
   try{recog&&recog.abort();}catch(e){}
   window.speechSynthesis&&speechSynthesis.cancel();
@@ -790,29 +792,40 @@ let voices=[];
 function loadVoices(){voices=speechSynthesis.getVoices();}
 if('speechSynthesis' in window){loadVoices();speechSynthesis.onvoiceschanged=loadVoices;}
 let audioCtx=null,currentAudio=null,genId=0,currentSpeakText='';
+let pipeActive=false,pipeSpoken='',pipePushed=false;
+/* if a reply is cut off, record what was actually said so the next
+   question isn't answered on top of a dangling unanswered one */
+function flushInterruptedTurn(){
+  if(!pipeActive||pipePushed)return;
+  const said=pipeSpoken.trim();
+  history.push({role:'assistant',content:(said?said+' ':'')+'[interrupted by user — do not resume this topic unless asked]'});
+  pipePushed=true;pipeActive=false;
+}
 
 async function streamAsk(sys,headers,model){
   const myGen=++genId;
   const q=[];                 /* ordered sentence queue with per-item prefetch */
   let playing=false,streamDone=false,finished=false;
-  let weatherTriggered=false,buffer='',leading=true,spoken='';
+  let weatherTriggered=false,buffer='',leading=true;
   let musicGate=null,suppressText=false,endAfter=false;
+  pipeActive=true;pipeSpoken='';pipePushed=false;
 
   const finishIfDone=()=>{
     if(finished||!streamDone||playing||q.length)return;
     if(myGen!==genId)return;
     finished=true;
-    history.push({role:'assistant',content:spoken.trim()||'OK'});
+    if(!pipePushed){history.push({role:'assistant',content:pipeSpoken.trim()||'OK'});pipePushed=true;}
+    pipeActive=false;
     if(weatherTriggered)endConversation();
     else if(endAfter)endConversation();
-    else if(spoken.trim())followUp();
+    else if(pipeSpoken.trim())followUp();
     else endConversation();
   };
 
   const enqueue=(t)=>{
     t=t.trim();
     if(!t||suppressText)return;
-    spoken+=(spoken?' ':'')+t;
+    pipeSpoken+=(pipeSpoken?' ':'')+t;
     const item={text:t};
     if(cfg.elKey)item.blobP=elevenFetch(t);   /* prefetch immediately */
     q.push(item);
@@ -826,7 +839,7 @@ async function streamAsk(sys,headers,model){
       if(musicGate){
         const err=await musicGate;musicGate=null;
         if(err){ /* command failed — speak the error instead of the confirmation */
-          q.length=0;suppressText=true;spoken=err;
+          q.length=0;suppressText=true;pipeSpoken=err;
           await speakChunk({text:err,blobP:cfg.elKey?elevenFetch(err):null},myGen);
           break;
         }
@@ -901,12 +914,14 @@ async function streamAsk(sys,headers,model){
     /* token-only reply (no text): resolve the command gate here */
     if(musicGate&&!q.length&&!playing){
       const err=await musicGate;musicGate=null;
-      if(err){spoken=err;await speakChunk({text:err,blobP:cfg.elKey?elevenFetch(err):null},myGen);}
+      if(err){pipeSpoken=err;await speakChunk({text:err,blobP:cfg.elKey?elevenFetch(err):null},myGen);}
     }
     streamDone=true;
     finishIfDone();
   }catch(err){
     console.error(err);
+    if(!pipePushed){history.push({role:'assistant',content:'[error — no reply was given]'});pipePushed=true;}
+    pipeActive=false;
     if(myGen===genId){toast('Claude API: '+err.message);endConversation();}
   }
 }
