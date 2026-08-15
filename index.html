@@ -583,7 +583,7 @@ function startWake(){
     /* Chrome ends continuous sessions periodically — restart */
     if(wakeWanted&&!conversationActive)setTimeout(startWake,400);
   };
-  try{wakeRec.start();wakeRunning=true;}catch(e){wakeRunning=false;}
+  try{wakeRec.start();wakeRunning=true;}catch(e){wakeRunning=false;setTimeout(startWake,400);}
 }
 function stopWake(){
   wakeRunning=false;
@@ -624,12 +624,27 @@ function stopBarge(){
   bargeActive=false;
   try{bargeRec&&bargeRec.abort();}catch(e){}
 }
+/* Chrome allows only ONE recognizer at a time — starting while another
+   is still releasing throws. Retry briefly instead of dying. */
+function safeStartRecog(r,onFail){
+  let tries=0;
+  const attempt=()=>{
+    try{r.start();}
+    catch(e){
+      tries++;
+      if(tries<6)setTimeout(attempt,180);
+      else if(onFail)onFail();
+    }
+  };
+  attempt();
+}
 function interruptToListen(){
   genId++;                               /* kills the stream + audio queue */
+  stopBarge();
   try{if(currentAudio){currentAudio.pause();currentAudio=null;}}catch(e){}
   window.speechSynthesis&&speechSynthesis.cancel();
   clearTimeout(followTimer);
-  listenOnce();                          /* straight back to listening */
+  setTimeout(listenOnce,250);            /* give the mic a beat to free up */
 }
 
 /* =========================================================
@@ -647,6 +662,7 @@ function startConversation(){
   listenOnce();
 }
 function listenOnce(){
+  stopBarge();               /* make sure the barge listener has let go of the mic */
   recog=new SR();
   recog.lang=cfg.lang;recog.interimResults=false;recog.maxAlternatives=1;
   let finalText='';
@@ -663,7 +679,7 @@ function listenOnce(){
     if(finalText.trim())ask(finalText.trim());
     else endConversation();
   };
-  recog.start();
+  safeStartRecog(recog,endConversation);
 }
 function endConversation(){
   genId++; /* invalidates any in-flight stream + audio queue */
@@ -976,6 +992,7 @@ function pickVoice(){
 /* after an answer, keep listening briefly for a follow-up */
 function followUp(){
   if(!conversationActive)return;
+  stopBarge();               /* the barge listener must release the mic first */
   setState('listening');
   recog=new SR();
   recog.lang=cfg.lang;recog.interimResults=false;
@@ -991,7 +1008,7 @@ function followUp(){
     if(finalText.trim())ask(finalText.trim());
     else endConversation();
   };
-  recog.start();
+  safeStartRecog(recog,endConversation);
 }
 
 /* ---- gestures: tap anywhere = talk, long-press = settings ---- */
