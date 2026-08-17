@@ -74,7 +74,7 @@ body[data-theme="night"]{
 body[data-theme="night"]::before{
   background:radial-gradient(120% 90% at 50% 45%, transparent 28%, rgba(0,0,0,.92) 100%);
 }
-body.night-dim{filter:brightness(.62)}
+
 body.night-dim #waveCanvas,body.night-dim #waveLayer{opacity:0!important}
 
 /* ---- the clock: fills the whole screen ---- */
@@ -358,7 +358,7 @@ body.waves-on:not([data-theme="nightcall"]) #waveCanvas{opacity:.3}
 
     <div class="field">
       <label>Assistentens navn</label>
-      <input id="f-name" type="text" placeholder="Odin">
+      <input id="f-name" type="text" placeholder="James">
       <div class="hint">The assistant introduces itself with this name and responds to it. Pick something the speech recognizer hears consistently — distinct sounds, 2–3 syllables, not an everyday word.</div>
     </div>
 
@@ -423,6 +423,32 @@ body.waves-on:not([data-theme="nightcall"]) #waveCanvas{opacity:.3}
       </div>
     </div>
 
+    <div class="row2">
+      <div class="field">
+        <label>Stemme-lydstyrke dag (%)</label>
+        <input id="f-dayvol" type="number" min="0" max="100" placeholder="100">
+      </div>
+      <div class="field">
+        <label>Stemme-lydstyrke nat (%)</label>
+        <input id="f-nightvol" type="number" min="0" max="100" placeholder="35">
+      </div>
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label>Lysstyrke dag (%)</label>
+        <input id="f-daybright" type="number" min="5" max="100" placeholder="100">
+      </div>
+      <div class="field">
+        <label>Lysstyrke nat (%)</label>
+        <input id="f-nightbright" type="number" min="5" max="100" placeholder="55">
+      </div>
+    </div>
+
+    <div class="check">
+      <input type="checkbox" id="f-duck">
+      <span>Pause musikken når James aktiveres</span>
+    </div>
+
     <div class="check">
       <input type="checkbox" id="f-autoupdate">
       <span>Auto-opdatér når en ny version er uploadet</span>
@@ -479,7 +505,7 @@ const cfg={
   get city(){return store.get('city','København');},
   get wxDur(){return Math.max(5,parseInt(store.get('wx_dur','20'))||20);},
   get spClientId(){return store.get('sp_client_id','');},
-  get name(){return store.get('assistant_name','Odin');},
+  get name(){return store.get('assistant_name','James');},
   get persona(){return store.get('persona',"You are a distinguished English butler-valet of the old school — think Jeeves or a Bond-era gentleman's gentleman. Impeccably courteous, understated, unflappable. Address the user as 'sir' naturally within replies. Refined vocabulary, dry subtle wit, never obsequious, never casual slang. Deliver even mundane information with quiet elegance, e.g. 'The weather in your region is exceptional, sir — a slight breeze, and not a cloud to trouble you.' If replying in Danish, keep the same distinguished butler manner and use the formal 'De' form, addressing the user as 'hr.'");},
   get theme(){return store.get('theme','racing');},
   get wavesOn(){return store.get('waves_on','0')==='1';},
@@ -487,10 +513,15 @@ const cfg={
   get nightStart(){return parseInt(store.get('night_start','22'));},
   get nightEnd(){return parseInt(store.get('night_end','7'));},
   get autoUpdate(){return store.get('auto_update','1')==='1';},
+  get duckMusic(){return store.get('duck_music','1')==='1';},
+  get dayVol(){return parseInt(store.get('day_vol','100'));},
+  get nightVol(){return parseInt(store.get('night_vol','35'));},
+  get dayBright(){return parseInt(store.get('day_bright','100'));},
+  get nightBright(){return parseInt(store.get('night_bright','55'));},
   get elKey(){return store.get('el_key','');},
   get elVoice(){return store.get('el_voice','21m00Tcm4TlvDq8ikWAM');},
   get wakeOn(){return store.get('wake_on','0')==='1';},
-  get wakeWords(){return store.get('wake_words',this.name.toLowerCase()).split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);}
+  get wakeWords(){return store.get('wake_words','james, jaymes, jamie, jame, hey james').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);}
 };
 const $=id=>document.getElementById(id);
 function toast(m){const t=$('toast');t.textContent=m;t.classList.add('on');setTimeout(()=>t.classList.remove('on'),2600);}
@@ -513,6 +544,39 @@ function applyWaves(on){
   syncWaveAnim();
 }
 
+/* ---- volume & brightness ----
+   Volume applies to James's own voice (and optionally Spotify).
+   Brightness uses the real backlight under Fully Kiosk when available,
+   otherwise a CSS dim. Both follow day/night presets automatically and
+   can be overridden by voice for the rest of the current period. */
+let voiceVolume=1, brightPct=100, volOverride=null, brightOverride=null;
+
+function applyVolume(pct){
+  pct=Math.max(0,Math.min(100,Math.round(pct)));
+  voiceVolume=pct/100;
+  try{if(currentAudio)currentAudio.volume=voiceVolume;}catch(e){}
+  try{if(window.fully&&fully.setAudioVolume)fully.setAudioVolume(pct,3);}catch(e){}
+  return pct;
+}
+function applyBrightness(pct){
+  pct=Math.max(5,Math.min(100,Math.round(pct)));
+  brightPct=pct;
+  let real=false;
+  try{
+    if(window.fully&&fully.setScreenBrightness){
+      fully.setScreenBrightness(Math.round(pct*2.55));   /* 0-255 real backlight */
+      real=true;
+    }
+  }catch(e){}
+  /* CSS dim as fallback (or on top of a very low backlight) */
+  document.body.style.filter = (pct>=100&&real) ? 'none' : `brightness(${(real?Math.max(.75,pct/100):pct/100).toFixed(3)})`;
+  return pct;
+}
+function syncOutputLevels(){
+  applyVolume(volOverride!==null?volOverride:(nightActive?cfg.nightVol:cfg.dayVol));
+  applyBrightness(brightOverride!==null?brightOverride:(nightActive?cfg.nightBright:cfg.dayBright));
+}
+
 /* ---- night mode: locked amber theme + dimming on a schedule ---- */
 let nightActive=false;
 function isNightNow(){
@@ -524,9 +588,11 @@ function syncNight(){
   const want=isNightNow();
   if(want===nightActive)return;
   nightActive=want;
+  volOverride=null;brightOverride=null;    /* each period starts from its preset */
   document.body.classList.toggle('night-dim',want);
   if(want){document.body.dataset.theme='night';}
   else{document.body.dataset.theme=cfg.theme;}
+  syncOutputLevels();
   syncWaveAnim();
 }
 setInterval(syncNight,30000);
@@ -774,10 +840,10 @@ function startWake(){
   wakeRec.onend=()=>{
     wakeRunning=false;
     /* Chrome ends continuous sessions periodically — restart (deduped) */
-    if(wakeWanted&&!conversationActive)scheduleWake(500);
+    if(wakeWanted&&!conversationActive)scheduleWake(120);
   };
   try{wakeRec.start();wakeRunning=true;}
-  catch(e){wakeRunning=false;scheduleWake(500);}
+  catch(e){wakeRunning=false;scheduleWake(200);}
 }
 function stopWake(){
   clearTimeout(wakeTimer);
@@ -855,14 +921,34 @@ function interruptToListen(){
    ========================================================= */
 let recog=null, followTimer=null;
 
+const GREETINGS_EN=['Yes, sir.','How may I help, sir?','At your service, sir.','Sir?','You rang, sir?'];
+const GREETINGS_DA=['Ja, hr.','Hvad kan jeg hjælpe med?','Til tjeneste, hr.','De ringede, hr.?'];
+const greetCache={};
+async function playGreeting(){
+  const list=da()?GREETINGS_DA:GREETINGS_EN;
+  const text=list[Math.floor(Math.random()*list.length)];
+  currentSpeakText=text;
+  if(cfg.elKey){
+    try{
+      if(!greetCache[text])greetCache[text]=elevenFetch(text);
+      const blob=await greetCache[text];
+      await playBlob(blob);
+      return;
+    }catch(e){delete greetCache[text];}
+  }
+  await speakBrowserChunk(text);
+}
 function startConversation(){
   if(conversationActive){endConversation();return;}
   if(!SR){toast('Speech recognition needs Chrome.');return;}
   stopWake();
   conversationActive=true;
-
   render();
-  listenOnce();
+  spotifyAutoPause();                 /* duck the music immediately */
+  setState('speaking');
+  playGreeting().then(()=>{
+    if(conversationActive)listenOnce();
+  }).catch(()=>{if(conversationActive)listenOnce();});
 }
 function listenOnce(attempt){
   attempt=attempt||0;
@@ -897,15 +983,20 @@ function endConversation(){
   clearTimeout(followTimer);
   conversationActive=false;
   setState('idle');
-
+  spotifyAutoResume();
   render();
-  if(wakeWanted)scheduleWake(600);
+  if(wakeWanted)scheduleWake(300);
 }
 
 /* ========= brain ========= */
 const history=[];
 let wxData=null;
 let nowPlaying=null;
+function devicesForPrompt(){
+  if(!spDevices.length)return '';
+  const list=spDevices.map(d=>`${d.name} (${d.type}${d.is_active?', aktiv':''})`).join(', ');
+  return (da()?`\nTilgængelige Spotify-enheder: ${list}.`:`\nAvailable Spotify devices: ${list}.`);
+}
 function nowPlayingForPrompt(){
   if(!nowPlaying)return da()?'\nSpotify: intet spiller lige nu.':'\nSpotify: nothing is playing right now.';
   return (da()
@@ -943,11 +1034,14 @@ async function ask(question){
     ?` TEMAER: Skærmen har temaer: ${Object.entries(THEMES).map(([k,v])=>k+' ('+v+')').join(', ')}. Temaet "jp50" tales ofte som et nummer — "050"/"halvtreds"/"tema 50" betyder jp50. Hvis brugeren beder om at skifte tema, udseende eller farver, skal dit svar starte med præcis [THEME:tema-id] efterfulgt af et mellemrum. Vælg det tema der bedst matcher ønsket. BØLGER: Skærmen kan også vise en blød, sløret bølgeeffekt i temaets accentfarve. Hvis brugeren beder om at slå bølger/wave-effekten til eller fra (fx "slå bølgerne til", "fjern bølgerne", "vis bølger"), skal svaret indeholde tokenet [WAVES:on] eller [WAVES:off]. Du kan kombinere flere tokens i træk i starten af samme svar hvis brugeren beder om flere ting på én gang, fx [THEME:jp50][WAVES:on] Så er det gjort! — efterfulgt af en kort naturlig bekræftelse. Brug aldrig tokens ellers.`
     :` THEMES: The screen has themes: ${Object.entries(THEMES).map(([k,v])=>k+' ('+v+')').join(', ')}. The theme "jp50" is often spoken as a number — "050"/"fifty"/"theme 50" means jp50. If the user asks to change theme, look or colours, start your reply with exactly [THEME:theme-id]. Pick the best-matching theme. WAVES: The screen can also show a soft, blurred wave effect tinted in the theme's accent colour. If the user asks to turn waves on or off (e.g. "turn on the waves", "remove the waves"), include the token [WAVES:on] or [WAVES:off]. You can chain multiple tokens at the start of one reply if the user asks for several things at once, e.g. [THEME:jp50][WAVES:on] Done! — followed by a short natural confirmation. Never use tokens otherwise.`)
     +(da()
-    ?` MUSIK: Du kan styre Spotify. Hvis brugeren beder om at afspille en bestemt sang, kunstner eller album, skal svaret starte med [PLAY:søgetekst] — fx [PLAY:Tame Impala Let It Happen]. Hvis brugeren beder om en playliste, brug [PLAYLIST:navn] — fx [PLAYLIST:fokus]. Til simple kommandoer brug [MUSIC:pause], [MUSIC:resume], [MUSIC:next] eller [MUSIC:prev]. Efter tokenet skriver du en kort naturlig bekræftelse. Brug aldrig musik-tokens hvis brugeren blot spørger om hvad der spiller — det kan du se herunder.`
-    :` MUSIC: You can control Spotify. If the user asks to play a specific song, artist or album, start your reply with [PLAY:search text] — e.g. [PLAY:Tame Impala Let It Happen]. For a playlist use [PLAYLIST:name] — e.g. [PLAYLIST:focus]. For simple commands use [MUSIC:pause], [MUSIC:resume], [MUSIC:next] or [MUSIC:prev]. Follow the token with a short natural confirmation. Never use music tokens if the user is merely asking what is currently playing — that information is given below.`)
+    ?` MUSIK: Du kan styre Spotify. Afspil noget: [PLAY:søgetekst]. Playliste: [PLAYLIST:navn]. Sæt i kø (uden at afbryde nuværende sang): [QUEUE:søgetekst] — brug denne når brugeren siger "sæt X i kø", "spil X bagefter" eller "tilføj X". Skift afspilningsenhed: [DEVICE:navn] — fx [DEVICE:telefon] eller [DEVICE:computer]. Simple kommandoer: [MUSIC:pause], [MUSIC:resume], [MUSIC:next], [MUSIC:prev]. Efter tokenet skriver du en kort naturlig bekræftelse. Brug aldrig musik-tokens hvis brugeren blot spørger hvad der spiller.`
+    :` MUSIC: You can control Spotify. Play something: [PLAY:search text]. Playlist: [PLAYLIST:name]. Add to queue without interrupting the current song: [QUEUE:search text] — use this when the user says "queue X", "play X next" or "add X". Switch playback device: [DEVICE:name] — e.g. [DEVICE:phone] or [DEVICE:computer]. Simple commands: [MUSIC:pause], [MUSIC:resume], [MUSIC:next], [MUSIC:prev]. Follow the token with a short natural confirmation. Never use music tokens if the user is merely asking what is playing.`)
     +(da()
     ?` VEJR ANDRE STEDER: Hvis brugeren spørger om vejret et andet sted end ${cfg.city} (fx "hvordan er vejret i London?"), skal dit svar starte med [LOOKUP:bynavn] og INTET andet — så henter systemet vejret og spørger dig igen med data. Brug kun dette til andre byer, ikke til ${cfg.city}.`
     :` WEATHER ELSEWHERE: If the user asks about the weather somewhere other than ${cfg.city} (e.g. "what's the weather in London?"), reply with [LOOKUP:cityname] and NOTHING else — the system will fetch that weather and ask you again with the data. Only use this for other cities, never for ${cfg.city}.`)
+    +(da()
+    ?` LYD & LYS: Din egen stemmes lydstyrke er lige nu ${Math.round(voiceVolume*100)}% og skærmens lysstyrke ${brightPct}%. Hvis brugeren vil ændre din stemmes lydstyrke, brug [VOLUME:tal] (0-100). Skærmens lysstyrke: [BRIGHT:tal] (5-100). Musikkens lydstyrke i Spotify: [MUSICVOL:tal] (0-100). Ved relative ønsker ("skru lidt op", "halvér lysstyrken") regner du selv den nye værdi ud fra de nuværende. Hvis det er uklart om brugeren mener din stemme eller musikken, så vælg musikken hvis der spiller musik, ellers din stemme.`
+    :` SOUND & LIGHT: Your own voice volume is currently ${Math.round(voiceVolume*100)}% and screen brightness ${brightPct}%. To change your voice volume use [VOLUME:number] (0-100). Screen brightness: [BRIGHT:number] (5-100). Spotify music volume: [MUSICVOL:number] (0-100). For relative requests ("turn it up a bit", "halve the brightness") work out the new value yourself from the current ones. If it's unclear whether the user means your voice or the music, choose the music when music is playing, otherwise your voice.`)
     +(da()
     ?` TIMER: Du kan sætte en timer. Hvis brugeren beder om det (fx "sæt en timer på ti minutter", "kald mig om et kvarter"), skal svaret starte med [TIMER:sekunder:etiket] — fx [TIMER:600:æg] eller [TIMER:900:] hvis der ingen etiket er. Hvis brugeren vil annullere, brug [TIMER:cancel:]. Efter tokenet siger du en kort bekræftelse.`
     :` TIMER: You can set a timer. If the user asks (e.g. "set a timer for ten minutes", "remind me in a quarter of an hour"), start your reply with [TIMER:seconds:label] — e.g. [TIMER:600:eggs] or [TIMER:900:] when there is no label. To cancel, use [TIMER:cancel:]. Follow the token with a short confirmation.`)
@@ -957,7 +1051,7 @@ async function ask(question){
     +(da()
     ?`\nKlokken er lige nu ${new Date().toLocaleTimeString('da-DK',{hour:'2-digit',minute:'2-digit'})}.`
     :`\nThe current time is ${new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}.`)
-    +nowPlayingForPrompt()
+    +nowPlayingForPrompt()+devicesForPrompt()
     +weatherSummaryForPrompt()
     +(da()?` Dagens dato: ${new Date().toLocaleDateString('da-DK')}.`:` Today's date: ${new Date().toLocaleDateString('en-GB')}.`);
   history.push({role:'user',content:question});
@@ -1064,6 +1158,11 @@ async function streamAsk(sys,headers,model){
       else if(m=tok.match(/^\[PLAY:([^\]]+)\]$/i))musicGate=spotifyPlayRequest(m[1].trim(),'track');
       else if(m=tok.match(/^\[PLAYLIST:([^\]]+)\]$/i))musicGate=spotifyPlayRequest(m[1].trim(),'playlist');
       else if(m=tok.match(/^\[MUSIC:(pause|resume|next|prev)\]$/i))musicGate=spotifySimpleCommand(m[1].toLowerCase());
+      else if(m=tok.match(/^\[QUEUE:([^\]]+)\]$/i))musicGate=spotifyQueue(m[1].trim());
+      else if(m=tok.match(/^\[DEVICE:([^\]]+)\]$/i))musicGate=spotifyTransfer(m[1].trim());
+      else if(m=tok.match(/^\[VOLUME:(\d{1,3})\]$/i)){volOverride=parseInt(m[1]);applyVolume(volOverride);}
+      else if(m=tok.match(/^\[BRIGHT:(\d{1,3})\]$/i)){brightOverride=parseInt(m[1]);applyBrightness(brightOverride);}
+      else if(m=tok.match(/^\[MUSICVOL:(\d{1,3})\]$/i))musicGate=spotifySetVolume(parseInt(m[1]));
       else{leading=false;break;}               /* unknown bracket — treat as text */
       buffer=buffer.slice(close+1);
     }
@@ -1203,6 +1302,7 @@ async function speakChunk(item,myGen){
 function playBlob(blob){
   return new Promise(resolve=>{
     const audio=new Audio(URL.createObjectURL(blob));
+    audio.volume=voiceVolume;
     currentAudio=audio;
     let meterRAF=null,cadence=null;
     const finish=()=>{
@@ -1244,6 +1344,7 @@ function speakBrowserChunk(text){
     u.lang=cfg.lang;
     u.voice=pickVoice();
     u.rate=1.02;
+    u.volume=voiceVolume;
     let gotBoundary=false,fb=null;
     u.onboundary=ev=>{gotBoundary=true;const len=(ev.charLength||4);talkPulse(0.45+Math.min(0.55,len*0.09));};
     u.onstart=()=>{fb=setTimeout(()=>{if(!gotBoundary)fb=setInterval(()=>talkPulse(0.4+Math.random()*0.5),260);},600);};
@@ -1268,29 +1369,35 @@ function pickVoice(){
 }
 
 /* after an answer, keep listening briefly for a follow-up */
-function followUp(attempt){
+/* Follow-up listens for a full 6 seconds of real silence. Chrome likes to
+   end recognition early with no-speech; we simply restart it until the
+   deadline passes, so a short blip can never end the conversation. */
+let followDeadline=0;
+function followUp(deadline){
   if(!conversationActive)return;
-  attempt=attempt||0;
-  stopBarge();               /* barge listener must release the mic first */
+  stopBarge();
+  followDeadline=deadline||Date.now()+6000;
+  if(Date.now()>=followDeadline){endConversation();return;}
   setState('listening');
   recog=new SR();
-  recog.lang=cfg.lang;recog.interimResults=false;
-  let finalText='';
-  const t0=Date.now();
-  followTimer=setTimeout(()=>{try{recog.stop();}catch(e){}},6000);
+  recog.lang=cfg.lang;recog.interimResults=true;   /* interim = detects speech sooner */
+  let finalText='',heardSomething=false;
+  clearTimeout(followTimer);
+  followTimer=setTimeout(()=>{try{recog.stop();}catch(e){}},Math.max(500,followDeadline-Date.now()));
   recog.onresult=ev=>{
-    clearTimeout(followTimer);
-    for(const r of ev.results){if(r.isFinal)finalText+=r[0].transcript;}
+    for(const r of ev.results){
+      if(r.isFinal)finalText+=r[0].transcript;
+      else if(r[0].transcript.trim())heardSomething=true;
+    }
+    if(heardSomething||finalText)clearTimeout(followTimer);
   };
-  recog.onerror=ev=>{
-    if(ev.error==='not-allowed')endConversation();
-    /* other errors: onend decides */
-  };
+  recog.onerror=ev=>{if(ev.error==='not-allowed')endConversation();};
   recog.onend=()=>{
     clearTimeout(followTimer);
     if(!conversationActive)return;
     if(finalText.trim()){ask(finalText.trim());return;}
-    if(Date.now()-t0<900&&attempt<2){setTimeout(()=>followUp(attempt+1),200);return;}
+    /* nothing final yet — keep listening until the 6s window really expires */
+    if(Date.now()<followDeadline-200){setTimeout(()=>followUp(followDeadline),120);return;}
     endConversation();
   };
   safeStartRecog(recog,endConversation);
@@ -1447,9 +1554,18 @@ async function spEnsureToken(){
   }
   return null;
 }
+let spDevices=[],spDeviceTick=0;
+async function refreshDevices(token){
+  try{
+    const r=await fetch('https://api.spotify.com/v1/me/player/devices',{headers:{Authorization:'Bearer '+token}});
+    const d=await r.json();
+    spDevices=d.devices||[];
+  }catch(e){}
+}
 async function pollSpotify(){
   const token=await spEnsureToken();
   if(!token){spotifyPlaying=false;return;}
+  if(spDeviceTick++%4===0)refreshDevices(token);   /* ~every 20s */
   try{
     const r=await fetch('https://api.spotify.com/v1/me/player/currently-playing',{
       headers:{Authorization:'Bearer '+token}});
@@ -1473,6 +1589,7 @@ setInterval(pollSpotify,5000);pollSpotify();
 /* ---- playback control (Premium only) ----
    Returns a short status string for spoken feedback, or '' on success. */
 async function spotifyPlayRequest(query,kind){
+  wePausedSpotify=false;      /* explicit command overrides auto-resume */
   const token=await spEnsureToken();
   if(!token)return da()?'Spotify er ikke forbundet.':'Spotify is not connected.';
   try{
@@ -1483,7 +1600,18 @@ async function spotifyPlayRequest(query,kind){
     const sd=await sr.json();
     let body=null,foundName='';
     if(kind==='playlist'){
-      const pl=sd.playlists?.items?.filter(Boolean)[0];
+      let pl=null;
+      /* prefer the user's own playlists — better name matching */
+      try{
+        const mine=await fetch('https://api.spotify.com/v1/me/playlists?limit=50',{headers:{Authorization:'Bearer '+token}});
+        const md=await mine.json();
+        const list=(md.items||[]).filter(Boolean);
+        const q=query.toLowerCase().trim();
+        pl=list.find(p=>p.name.toLowerCase()===q)
+           ||list.find(p=>p.name.toLowerCase().includes(q))
+           ||list.find(p=>q.includes(p.name.toLowerCase()));
+      }catch(e){}
+      if(!pl)pl=sd.playlists?.items?.filter(Boolean)[0];
       if(!pl)return da()?'Jeg kunne ikke finde den playliste.':"I couldn't find that playlist.";
       body={context_uri:pl.uri};foundName=pl.name;
     }else{
@@ -1520,6 +1648,99 @@ async function spotifyPlayRequest(query,kind){
     return da()?'Der gik noget galt med Spotify.':'Something went wrong with Spotify.';
   }
 }
+/* pause the music the instant James is summoned; resume when done */
+let wePausedSpotify=false;
+async function spotifyAutoPause(){
+  if(!cfg.duckMusic)return;
+  if(!spotifyPlaying)return;
+  const token=await spEnsureToken();
+  if(!token)return;
+  try{
+    await fetch('https://api.spotify.com/v1/me/player/pause',{method:'PUT',headers:{Authorization:'Bearer '+token}});
+    wePausedSpotify=true;
+    spotifyPlaying=false;render();
+  }catch(e){}
+}
+async function spotifyAutoResume(){
+  if(!wePausedSpotify)return;
+  wePausedSpotify=false;
+  const token=await spEnsureToken();
+  if(!token)return;
+  try{
+    await fetch('https://api.spotify.com/v1/me/player/play',{method:'PUT',headers:{Authorization:'Bearer '+token}});
+    setTimeout(pollSpotify,900);
+  }catch(e){}
+}
+
+/* add a track to the queue instead of playing it immediately */
+async function spotifyQueue(query){
+  wePausedSpotify=false;
+  const token=await spEnsureToken();
+  if(!token)return da()?'Spotify er ikke forbundet.':'Spotify is not connected.';
+  try{
+    const sr=await fetch('https://api.spotify.com/v1/search?'+new URLSearchParams({q:query,type:'track',limit:'1'}),
+      {headers:{Authorization:'Bearer '+token}});
+    const sd=await sr.json();
+    const tr=sd.tracks?.items?.filter(Boolean)[0];
+    if(!tr)return da()?'Jeg kunne ikke finde den sang.':"I couldn't find that song.";
+    const qr=await fetch('https://api.spotify.com/v1/me/player/queue?'+new URLSearchParams({uri:tr.uri}),
+      {method:'POST',headers:{Authorization:'Bearer '+token}});
+    if(qr.status===403)return da()?'Det kræver Spotify Premium.':'That requires Spotify Premium.';
+    if(qr.status===404)return da()?'Der er ingen aktiv Spotify-enhed.':'There is no active Spotify device.';
+    if(!qr.ok&&qr.status!==204)return da()?'Spotify afviste kommandoen.':'Spotify rejected the command.';
+    return '';
+  }catch(e){console.error(e);return da()?'Der gik noget galt med Spotify.':'Something went wrong with Spotify.';}
+}
+
+/* move playback to another device by name/type */
+async function spotifyTransfer(nameQuery){
+  wePausedSpotify=false;
+  const token=await spEnsureToken();
+  if(!token)return da()?'Spotify er ikke forbundet.':'Spotify is not connected.';
+  try{
+    await refreshDevices(token);
+    if(!spDevices.length)return da()?'Der er ingen tilgængelige Spotify-enheder.':'There are no available Spotify devices.';
+    const q=(nameQuery||'').toLowerCase().trim();
+    const typeHints={computer:['computer','pc','laptop','desktop','mac'],
+                     smartphone:['phone','telefon','mobil','iphone','android'],
+                     speaker:['speaker', 'højttaler','sonos']};
+    let target=spDevices.find(d=>d.name.toLowerCase().includes(q));
+    if(!target){
+      for(const [type,words] of Object.entries(typeHints)){
+        if(words.some(w=>q.includes(w))){
+          target=spDevices.find(d=>(d.type||'').toLowerCase()===type);
+          if(target)break;
+        }
+      }
+    }
+    if(!target){
+      const names=spDevices.map(d=>d.name).join(', ');
+      return (da()?`Jeg kunne ikke finde den enhed. Tilgængelige: ${names}.`
+                  :`I couldn't find that device. Available: ${names}.`);
+    }
+    const r=await fetch('https://api.spotify.com/v1/me/player',{
+      method:'PUT',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
+      body:JSON.stringify({device_ids:[target.id],play:true})});
+    if(r.status===403)return da()?'Det kræver Spotify Premium.':'That requires Spotify Premium.';
+    if(!r.ok&&r.status!==204)return da()?'Spotify afviste kommandoen.':'Spotify rejected the command.';
+    setTimeout(pollSpotify,1200);
+    return '';
+  }catch(e){console.error(e);return da()?'Der gik noget galt med Spotify.':'Something went wrong with Spotify.';}
+}
+
+async function spotifySetVolume(pct){
+  const token=await spEnsureToken();
+  if(!token)return da()?'Spotify er ikke forbundet.':'Spotify is not connected.';
+  pct=Math.max(0,Math.min(100,Math.round(pct)));
+  try{
+    const r=await fetch('https://api.spotify.com/v1/me/player/volume?'+new URLSearchParams({volume_percent:String(pct)}),
+      {method:'PUT',headers:{Authorization:'Bearer '+token}});
+    if(r.status===403)return da()?'Det kræver Spotify Premium.':'That requires Spotify Premium.';
+    if(r.status===404)return da()?'Der er ingen aktiv Spotify-enhed.':'There is no active Spotify device.';
+    return '';
+  }catch(e){console.error(e);return '';}
+}
+
 async function spotifySimpleCommand(cmd){
   const token=await spEnsureToken();
   if(!token)return da()?'Spotify er ikke forbundet.':'Spotify is not connected.';
@@ -1528,6 +1749,7 @@ async function spotifySimpleCommand(cmd){
     next:{m:'POST',u:'next'},  prev:{m:'POST',u:'previous'}
   };
   const c=map[cmd];if(!c)return '';
+  wePausedSpotify=false;      /* explicit command overrides auto-resume */
   try{
     const r=await fetch('https://api.spotify.com/v1/me/player/'+c.u,{
       method:c.m,headers:{Authorization:'Bearer '+token}});
@@ -1549,6 +1771,9 @@ function openSettings(){
   $('f-nightstart').value=cfg.nightStart;
   $('f-nightend').value=cfg.nightEnd;
   $('f-autoupdate').checked=cfg.autoUpdate;
+  $('f-duck').checked=cfg.duckMusic;
+  $('f-dayvol').value=cfg.dayVol;$('f-nightvol').value=cfg.nightVol;
+  $('f-daybright').value=cfg.dayBright;$('f-nightbright').value=cfg.nightBright;
   $('f-wake').checked=cfg.wakeOn;
   $('f-name').value=cfg.name;
   $('f-persona').value=cfg.persona;
@@ -1570,11 +1795,18 @@ $('saveSet').addEventListener('click',()=>{
   store.set('night_start',$('f-nightstart').value.trim()||'22');
   store.set('night_end',$('f-nightend').value.trim()||'7');
   store.set('auto_update',$('f-autoupdate').checked?'1':'0');
-  nightActive=!nightActive;syncNight();   /* force re-evaluation */
+  store.set('duck_music',$('f-duck').checked?'1':'0');
+  store.set('day_vol',$('f-dayvol').value.trim()||'100');
+  store.set('night_vol',$('f-nightvol').value.trim()||'35');
+  store.set('day_bright',$('f-daybright').value.trim()||'100');
+  store.set('night_bright',$('f-nightbright').value.trim()||'55');
+  volOverride=null;brightOverride=null;syncOutputLevels();
+  nightActive=!nightActive;syncNight();
+syncOutputLevels();   /* force re-evaluation */
   store.set('el_key',$('f-elkey').value.trim());
   store.set('el_voice',$('f-elvoice').value.trim()||'21m00Tcm4TlvDq8ikWAM');
   store.set('sp_client_id',$('f-spid').value.trim());
-  store.set('assistant_name',$('f-name').value.trim()||'Odin');
+  store.set('assistant_name',$('f-name').value.trim()||'James');
   store.set('persona',$('f-persona').value.trim());
   if(!$('f-persona').value.trim()){try{localStorage.removeItem('persona');}catch(e){delete mem['persona'];}}
   store.set('wake_words',$('f-wakewords').value);
@@ -1664,6 +1896,7 @@ if(navigator.locks){
 applyTheme(cfg.theme);
 applyWaves(cfg.wavesOn);
 syncNight();
+syncOutputLevels();
 wakeWanted=cfg.wakeOn;
 updateWakeBtn();
 $('wakeDotLabel').textContent=(da()?'Lytter efter “hej ':'Listening for “hey ')+cfg.name+'”';
