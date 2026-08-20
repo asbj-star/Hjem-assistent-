@@ -194,6 +194,15 @@ body.waves-on:not([data-theme="nightcall"]) #waveCanvas{opacity:.3}
 .wx-h .t{font-size:19px;font-weight:400}
 #w-timer{position:absolute;bottom:0;left:0;height:3px;background:var(--amber);width:100%;transform-origin:left}
 
+/* ALARM */
+#page-alarm{gap:10px}
+#a-label{color:var(--amber);letter-spacing:.3em;text-transform:uppercase;font-size:clamp(13px,1.8vw,17px)}
+#a-time{font-family:var(--clock-font);font-weight:var(--clock-weight);color:var(--amber);
+  -webkit-text-stroke:var(--clock-stroke) currentColor;paint-order:stroke fill;
+  font-size:clamp(90px,22vw,280px);line-height:1;font-variant-numeric:tabular-nums;
+  text-shadow:var(--clock-glow);animation:ringPulse .8s ease-in-out infinite}
+#a-sub{color:var(--muted);font-size:clamp(14px,2vw,20px);letter-spacing:.1em}
+
 /* TIMER */
 #page-timer{gap:10px}
 #t-label{color:var(--amber);letter-spacing:.3em;text-transform:uppercase;font-size:clamp(13px,1.8vw,17px)}
@@ -297,6 +306,13 @@ body.waves-on:not([data-theme="nightcall"]) #waveCanvas{opacity:.3}
   <div id="w-timer"></div>
 </section>
 
+<!-- ALARM -->
+<section class="page" id="page-alarm">
+  <div id="a-label">Alarm</div>
+  <div id="a-time">--:--</div>
+  <div id="a-sub"></div>
+</section>
+
 <!-- TIMER -->
 <section class="page" id="page-timer">
   <div id="t-label">Timer</div>
@@ -371,6 +387,32 @@ body.waves-on:not([data-theme="nightcall"]) #waveCanvas{opacity:.3}
       <label>ElevenLabs voice ID</label>
       <input id="f-elvoice" type="text" placeholder="21m00Tcm4TlvDq8ikWAM">
       <div class="hint">Find IDs in the elevenlabs.io voice library. Default is “Rachel”.</div>
+    </div>
+
+    <div class="field">
+      <label>Hvad James husker om dig</label>
+      <textarea id="f-memories" rows="6" placeholder="(tomt — James tilføjer selv efterhånden)"></textarea>
+      <div class="hint">One fact per line. Edit or delete freely — clearing the box wipes his memory.</div>
+    </div>
+
+    <div class="row2">
+      <div class="field">
+        <label>Første ring (sek.)</label>
+        <input id="f-alarmring" type="number" min="3" max="120" placeholder="10">
+      </div>
+      <div class="field">
+        <label>Ring mellem tjek (sek.)</label>
+        <input id="f-alarmrepeat" type="number" min="5" max="300" placeholder="30">
+      </div>
+    </div>
+    <div class="field">
+      <div class="hint" style="margin-top:-8px">Chimes, then James speaks and listens ~10 s for an answer. No reply → chimes again, escalating, up to twelve rounds.</div>
+    </div>
+
+    <div class="field">
+      <label>Alarmer</label>
+      <div id="f-alarmlist" class="hint" style="margin-top:0;line-height:1.7"></div>
+      <button class="btn ghost" id="clearAlarms" style="margin-top:8px">Slet alle alarmer</button>
     </div>
 
     <div class="field">
@@ -518,6 +560,8 @@ const cfg={
   get nightVol(){return parseInt(store.get('night_vol','35'));},
   get dayBright(){return parseInt(store.get('day_bright','100'));},
   get nightBright(){return parseInt(store.get('night_bright','55'));},
+  get alarmRingSecs(){return Math.max(3,parseInt(store.get('alarm_ring_secs','10')));},
+  get alarmRepeatSecs(){return Math.max(5,parseInt(store.get('alarm_repeat_secs','30')));},
   get elKey(){return store.get('el_key','');},
   get elVoice(){return store.get('el_voice','21m00Tcm4TlvDq8ikWAM');},
   get wakeOn(){return store.get('wake_on','0')==='1';},
@@ -647,6 +691,7 @@ let weatherUntil=0;
 let spotifyPlaying=false;
 
 function currentPage(){
+  if(alarmRinging) return 'alarm';          /* a ringing alarm wins outright */
   if(timerRinging) return 'timer';          /* a finished timer beats everything */
   if(conversationActive) return 'face';
   if(Date.now()<weatherUntil) return 'weather';
@@ -672,6 +717,200 @@ function showWeatherPage(){
     bar.style.transform='scaleX(0)';
   });});
 }
+
+/* ========= memory =========
+   Facts James remembers about the user, stored on this device.
+   He adds them himself via [REMEMBER:...] and can forget via [FORGET:...] */
+function loadMemories(){
+  try{return JSON.parse(store.get('memories','[]'));}catch(e){return [];}
+}
+function saveMemories(list){
+  store.set('memories',JSON.stringify(list.slice(-60)));   /* keep it bounded */
+}
+function addMemory(text){
+  text=(text||'').trim();
+  if(!text)return;
+  const list=loadMemories();
+  const low=text.toLowerCase();
+  if(list.some(m=>m.toLowerCase()===low))return;           /* no duplicates */
+  list.push(text);
+  saveMemories(list);
+}
+function forgetMemory(query){
+  query=(query||'').toLowerCase().trim();
+  if(!query)return;
+  const list=loadMemories();
+  const kept=list.filter(m=>!m.toLowerCase().includes(query));
+  saveMemories(kept);
+}
+function memoriesForPrompt(){
+  const list=loadMemories();
+  if(!list.length)return '';
+  return (da()?`\nDU HUSKER FØLGENDE OM BRUGEREN: `:`\nWHAT YOU REMEMBER ABOUT THE USER: `)
+    +list.map((m,i)=>`(${i+1}) ${m}`).join(' ');
+}
+
+/* ========= alarms =========
+   Recurring or one-off wake-up alarms. Stored as
+   {h, m, days:[0-6] or null for one-off, label, id, enabled} */
+function loadAlarms(){
+  try{return JSON.parse(store.get('alarms','[]'));}catch(e){return [];}
+}
+function saveAlarms(list){store.set('alarms',JSON.stringify(list.slice(0,20)));}
+function addAlarm(h,m,days,label){
+  const list=loadAlarms();
+  list.push({id:Date.now()+''+Math.floor(Math.random()*999),h,m,days:days||null,label:label||'',enabled:true});
+  saveAlarms(list);
+}
+function clearAlarms(){saveAlarms([]);}
+function alarmsForPrompt(){
+  const list=loadAlarms().filter(a=>a.enabled);
+  if(!list.length)return (da()?'\nIngen alarmer er sat.':'\nNo alarms are set.');
+  const dn=da()?['søn','man','tir','ons','tor','fre','lør']:['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  return (da()?'\nAktive alarmer: ':'\nActive alarms: ')+list.map(a=>{
+    const t=String(a.h).padStart(2,'0')+':'+String(a.m).padStart(2,'0');
+    const d=a.days&&a.days.length?a.days.map(x=>dn[x]).join('/'):(da()?'én gang':'once');
+    return t+' ('+d+(a.label?', '+a.label:'')+')';
+  }).join('; ')+'.';
+}
+let alarmRinging=null,alarmChime=null,lastAlarmKey='';
+let alarmPhaseTimer=null,alarmCycle=0,alarmRecog=null,alarmJustRang=false,snoozeTimer=null;
+
+function checkAlarms(){
+  if(alarmRinging)return;
+  const now=new Date();
+  const key=now.getHours()+':'+now.getMinutes()+':'+now.getDate();
+  if(key===lastAlarmKey)return;
+  const list=loadAlarms();
+  for(const a of list){
+    if(!a.enabled)continue;
+    if(a.h!==now.getHours()||a.m!==now.getMinutes())continue;
+    if(a.days&&a.days.length&&!a.days.includes(now.getDay()))continue;
+    lastAlarmKey=key;
+    alarmRinging=a;
+    alarmCycle=0;
+    if(!a.days||!a.days.length){                 /* one-off: consume it */
+      saveAlarms(list.filter(x=>x.id!==a.id));
+    }
+    startAlarmRing();
+    return;
+  }
+}
+
+/* ---- wake sequence: ring → speak → listen → ring again ---- */
+const WAKE_LINES_EN=[
+  'Good morning, sir. It is time to rise.',
+  'Sir? Are you awake?',
+  'Sir, the morning is getting on without you.',
+  'Still abed, sir. I really must insist.',
+  'Sir. Up. If you please.',
+  'I shall keep ringing, sir. You know I will.',
+  'Sir, this is becoming a matter of principle.',
+  'Very well, sir. Once more.'
+];
+const WAKE_LINES_DA=[
+  'Godmorgen, hr. Det er tid til at stå op.',
+  'Hr.? Er De vågen?',
+  'Hr., morgenen skrider frem uden Dem.',
+  'Stadig i seng, hr. Jeg må virkelig insistere.',
+  'Hr. Op. Om jeg må bede.',
+  'Jeg bliver ved med at ringe, hr. Det ved De.',
+  'Hr., nu er det et spørgsmål om principper.',
+  'Udmærket, hr. En gang til.'
+];
+
+function startAlarmRing(){
+  clearTimeout(alarmPhaseTimer);
+  if(alarmChime){clearInterval(alarmChime);alarmChime=null;}
+  brightOverride=100;applyBrightness(100);        /* wake the screen up */
+  volOverride=Math.max(cfg.dayVol,80);applyVolume(volOverride);
+  playChime();
+  alarmChime=setInterval(playChime,2600);
+  render();
+  /* short opening burst, then longer bursts between each check */
+  const secs=alarmCycle===0?cfg.alarmRingSecs:cfg.alarmRepeatSecs;
+  alarmPhaseTimer=setTimeout(alarmSpeak,secs*1000);
+}
+
+async function alarmSpeak(){
+  if(!alarmRinging)return;
+  if(alarmChime){clearInterval(alarmChime);alarmChime=null;}
+  const lines=da()?WAKE_LINES_DA:WAKE_LINES_EN;
+  const text=lines[Math.min(alarmCycle,lines.length-1)];
+  currentSpeakText=text;
+  setState('speaking');
+  try{
+    if(cfg.elKey){
+      const blob=await elevenFetch(text);
+      await playBlob(blob);
+    }else{
+      await speakBrowserChunk(text);
+    }
+  }catch(e){}
+  if(!alarmRinging)return;
+  alarmListen();
+}
+
+function alarmListen(){
+  if(!alarmRinging)return;
+  if(!SR){alarmCycle++;if(alarmCycle<12)startAlarmRing();else stopAlarmRing();return;}
+  stopWake();
+  setState('listening');
+  alarmRecog=new SR();
+  alarmRecog.lang=cfg.lang;
+  alarmRecog.interimResults=true;
+  let said='',heard=false;
+  const giveUp=setTimeout(()=>{try{alarmRecog.stop();}catch(e){}},10000);
+  alarmRecog.onresult=ev=>{
+    for(const r of ev.results){
+      if(r.isFinal)said+=r[0].transcript;
+      else if(r[0].transcript.trim())heard=true;
+    }
+    if(said.trim()){clearTimeout(giveUp);try{alarmRecog.stop();}catch(e){}}
+  };
+  alarmRecog.onerror=()=>{};
+  alarmRecog.onend=()=>{
+    clearTimeout(giveUp);
+    if(!alarmRinging)return;
+    if(said.trim()){alarmAwake(said.trim());return;}
+    alarmCycle++;
+    if(alarmCycle<12)startAlarmRing();
+    else stopAlarmRing();                        /* eventually give up */
+  };
+  safeStartRecog(alarmRecog,()=>{alarmCycle++;startAlarmRing();});
+}
+
+/* the user answered — hand what they said to James as a normal exchange */
+function alarmAwake(text){
+  stopAlarmRing();
+  alarmJustRang=true;
+  conversationActive=true;
+  render();
+  ask(text);
+}
+
+function snoozeFor(mins){
+  clearTimeout(snoozeTimer);
+  const m=Math.max(1,Math.min(60,mins||5));
+  snoozeTimer=setTimeout(()=>{
+    alarmRinging=alarmRinging||{h:new Date().getHours(),m:new Date().getMinutes(),label:da()?'udsat':'snoozed'};
+    alarmCycle=0;
+    startAlarmRing();
+  },m*60000);
+}
+
+function stopAlarmRing(){
+  clearTimeout(alarmPhaseTimer);
+  if(alarmChime){clearInterval(alarmChime);alarmChime=null;}
+  try{alarmRecog&&alarmRecog.abort();}catch(e){}
+  alarmRinging=null;
+  alarmCycle=0;
+  brightOverride=null;volOverride=null;syncOutputLevels();
+  setState('idle');
+  render();
+  if(wakeWanted)scheduleWake(400);
+}
+setInterval(checkAlarms,5000);
 
 /* ========= timer =========
    One timer at a time. Shows a countdown page while running,
@@ -713,6 +952,13 @@ function playChime(){
     beep(now,880);beep(now+0.28,1175);
   }catch(e){}
 }
+function tickAlarm(){
+  if(!alarmRinging)return;
+  $('a-time').textContent=String(alarmRinging.h).padStart(2,'0')+':'+String(alarmRinging.m).padStart(2,'0');
+  $('a-sub').textContent=alarmRinging.label||'';
+}
+setInterval(tickAlarm,500);
+
 function tickTimer(){
   if(!timerEnd)return;
   const left=timerRemaining();
@@ -982,6 +1228,7 @@ function endConversation(){
   try{if(currentAudio){currentAudio.pause();currentAudio=null;}}catch(e){}
   clearTimeout(followTimer);
   conversationActive=false;
+  alarmJustRang=false;
   setState('idle');
   spotifyAutoResume();
   render();
@@ -1040,6 +1287,12 @@ async function ask(question){
     ?` VEJR ANDRE STEDER: Hvis brugeren spørger om vejret et andet sted end ${cfg.city} (fx "hvordan er vejret i London?"), skal dit svar starte med [LOOKUP:bynavn] og INTET andet — så henter systemet vejret og spørger dig igen med data. Brug kun dette til andre byer, ikke til ${cfg.city}.`
     :` WEATHER ELSEWHERE: If the user asks about the weather somewhere other than ${cfg.city} (e.g. "what's the weather in London?"), reply with [LOOKUP:cityname] and NOTHING else — the system will fetch that weather and ask you again with the data. Only use this for other cities, never for ${cfg.city}.`)
     +(da()
+    ?` HUKOMMELSE: Hvis brugeren fortæller noget værd at huske på længere sigt (præferencer, navne, vaner, vigtige datoer), tilføjer du det med [REMEMBER:kort fakta] — fx [REMEMBER:Drikker kaffe kl. 7 hver morgen]. Brug det kun til varige fakta, ikke til småsnak. Hvis brugeren beder dig glemme noget, brug [FORGET:søgeord]. Nævn ikke tokens højt.`
+    :` MEMORY: If the user tells you something worth remembering long-term (preferences, names, habits, important dates), record it with [REMEMBER:short fact] — e.g. [REMEMBER:Drinks coffee at 7am every morning]. Only for lasting facts, not small talk. If asked to forget something, use [FORGET:keyword]. Never mention tokens aloud.`)
+    +(da()
+    ?` SNOOZE: Hvis alarmen lige har ringet og brugeren beder om mere tid ("fem minutter mere", "lidt endnu"), brug [SNOOZE:minutter] og bekræft kort. Hvis brugeren er vågen, ønsk godmorgen kort og lad være med tokens. ALARMER: Sæt en alarm med [ALARM:time:minut:dage:etiket] — dage er tal 0-6 (0=søndag) adskilt af komma, eller tomt for én gang. Fx [ALARM:6:30:1,2,3,4,5:arbejde] eller [ALARM:9:0::]. Slet alle alarmer med [ALARM:clear:::].`
+    :` SNOOZE: If the alarm has just gone off and the user asks for more time ("five more minutes", "a bit longer"), use [SNOOZE:minutes] and confirm briefly. If they are awake, greet them good morning briefly with no tokens. ALARMS: Set an alarm with [ALARM:hour:minute:days:label] — days are numbers 0-6 (0=Sunday) comma-separated, or empty for one-off. E.g. [ALARM:6:30:1,2,3,4,5:work] or [ALARM:9:0::]. Clear all alarms with [ALARM:clear:::].`)
+    +(da()
     ?` LYD & LYS: Din egen stemmes lydstyrke er lige nu ${Math.round(voiceVolume*100)}% og skærmens lysstyrke ${brightPct}%. Hvis brugeren vil ændre din stemmes lydstyrke, brug [VOLUME:tal] (0-100). Skærmens lysstyrke: [BRIGHT:tal] (5-100). Musikkens lydstyrke i Spotify: [MUSICVOL:tal] (0-100). Ved relative ønsker ("skru lidt op", "halvér lysstyrken") regner du selv den nye værdi ud fra de nuværende. Hvis det er uklart om brugeren mener din stemme eller musikken, så vælg musikken hvis der spiller musik, ellers din stemme.`
     :` SOUND & LIGHT: Your own voice volume is currently ${Math.round(voiceVolume*100)}% and screen brightness ${brightPct}%. To change your voice volume use [VOLUME:number] (0-100). Screen brightness: [BRIGHT:number] (5-100). Spotify music volume: [MUSICVOL:number] (0-100). For relative requests ("turn it up a bit", "halve the brightness") work out the new value yourself from the current ones. If it's unclear whether the user means your voice or the music, choose the music when music is playing, otherwise your voice.`)
     +(da()
@@ -1051,7 +1304,8 @@ async function ask(question){
     +(da()
     ?`\nKlokken er lige nu ${new Date().toLocaleTimeString('da-DK',{hour:'2-digit',minute:'2-digit'})}.`
     :`\nThe current time is ${new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}.`)
-    +nowPlayingForPrompt()+devicesForPrompt()
+    +(alarmJustRang?(da()?' VIGTIGT: Alarmen har lige ringet og brugeren svarede — det er vækning, ikke almindelig samtale.':' IMPORTANT: The alarm has just gone off and the user has responded — this is a wake-up, not an ordinary conversation.'):'')
+    +memoriesForPrompt()+alarmsForPrompt()+nowPlayingForPrompt()+devicesForPrompt()
     +weatherSummaryForPrompt()
     +(da()?` Dagens dato: ${new Date().toLocaleDateString('da-DK')}.`:` Today's date: ${new Date().toLocaleDateString('en-GB')}.`);
   history.push({role:'user',content:question});
@@ -1163,6 +1417,20 @@ async function streamAsk(sys,headers,model){
       else if(m=tok.match(/^\[VOLUME:(\d{1,3})\]$/i)){volOverride=parseInt(m[1]);applyVolume(volOverride);}
       else if(m=tok.match(/^\[BRIGHT:(\d{1,3})\]$/i)){brightOverride=parseInt(m[1]);applyBrightness(brightOverride);}
       else if(m=tok.match(/^\[MUSICVOL:(\d{1,3})\]$/i))musicGate=spotifySetVolume(parseInt(m[1]));
+      else if(m=tok.match(/^\[SNOOZE:(\d{1,2})\]$/i))snoozeFor(parseInt(m[1]));
+      else if(m=tok.match(/^\[REMEMBER:([^\]]+)\]$/i))addMemory(m[1].trim());
+      else if(m=tok.match(/^\[FORGET:([^\]]+)\]$/i))forgetMemory(m[1].trim());
+      else if(m=tok.match(/^\[ALARM:([^\]]*)\]$/i)){
+        const p=m[1].split(':');
+        if(/^clear$/i.test((p[0]||'').trim()))clearAlarms();
+        else{
+          const hh=parseInt(p[0]),mm=parseInt(p[1]||'0');
+          if(hh>=0&&hh<=23&&mm>=0&&mm<=59){
+            const days=(p[2]||'').split(',').map(x=>parseInt(x)).filter(x=>x>=0&&x<=6);
+            addAlarm(hh,mm,days,(p[3]||'').trim());
+          }
+        }
+      }
       else{leading=false;break;}               /* unknown bracket — treat as text */
       buffer=buffer.slice(close+1);
     }
@@ -1417,6 +1685,7 @@ function onUp(e){
   clearTimeout(pressTimer);
   if(longPressed)return;
   if(e.target.closest('#settings'))return;
+  if(alarmRinging){stopAlarmRing();return;} /* tap silences a ringing alarm */
   if(timerRinging){cancelTimer();return;}   /* tap silences a finished timer */
   const page=currentPage();
   if(page==='face'){
@@ -1777,6 +2046,16 @@ function openSettings(){
   $('f-wake').checked=cfg.wakeOn;
   $('f-name').value=cfg.name;
   $('f-persona').value=cfg.persona;
+  $('f-memories').value=loadMemories().join('\n');
+  $('f-alarmring').value=cfg.alarmRingSecs;$('f-alarmrepeat').value=cfg.alarmRepeatSecs;
+  (function(){
+    const list=loadAlarms();
+    const dn=['søn','man','tir','ons','tor','fre','lør'];
+    $('f-alarmlist').innerHTML = list.length
+      ? list.map(a=>`${String(a.h).padStart(2,'0')}:${String(a.m).padStart(2,'0')} — ${
+          a.days&&a.days.length?a.days.map(x=>dn[x]).join('/'):'én gang'}${a.label?' · '+a.label:''}`).join('<br>')
+      : (da()?'Ingen alarmer sat.':'No alarms set.');
+  })();
   $('f-wakewords').value=store.get('wake_words',cfg.name.toLowerCase());
   $('settings').classList.add('on');
 }
@@ -1808,6 +2087,9 @@ syncOutputLevels();   /* force re-evaluation */
   store.set('sp_client_id',$('f-spid').value.trim());
   store.set('assistant_name',$('f-name').value.trim()||'James');
   store.set('persona',$('f-persona').value.trim());
+  saveMemories($('f-memories').value.split('\n').map(x=>x.trim()).filter(Boolean));
+  store.set('alarm_ring_secs',$('f-alarmring').value.trim()||'10');
+  store.set('alarm_repeat_secs',$('f-alarmrepeat').value.trim()||'30');
   if(!$('f-persona').value.trim()){try{localStorage.removeItem('persona');}catch(e){delete mem['persona'];}}
   store.set('wake_words',$('f-wakewords').value);
   store.set('wake_on',$('f-wake').checked?'1':'0');
@@ -1856,6 +2138,11 @@ $('useGeo').addEventListener('click',e=>{
     ()=>ipFallback(),   /* denied / unavailable / no Windows location service */
     {enableHighAccuracy:false,timeout:8000,maximumAge:600000}
   );
+});
+$('clearAlarms').addEventListener('click',()=>{
+  clearAlarms();
+  $('f-alarmlist').textContent=da()?'Ingen alarmer sat.':'No alarms set.';
+  toast(da()?'Alarmer slettet':'Alarms cleared');
 });
 $('spAuthBtn').addEventListener('click',()=>{
   store.set('sp_client_id',$('f-spid').value.trim());
