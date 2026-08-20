@@ -347,7 +347,8 @@ body.waves-on:not([data-theme="nightcall"]) #waveCanvas{opacity:.3}
 <div id="settings">
   <div id="settingsCard">
     <h2>Indstillinger</h2>
-    <div class="sub">Tap anywhere to talk · hold ~1 second to open these settings. Saved on this device.</div>
+    <div class="sub">Tap anywhere to talk · hold ~1 second to open these settings. Saved on this device.<br>
+      <span style="color:var(--amber)">Version <span id="verNum"></span> · <span id="verDate"></span></span></div>
 
     <div class="field">
       <label>Anthropic API key</label>
@@ -716,6 +717,36 @@ function showWeatherPage(){
     bar.style.transition=`transform ${dur}ms linear`;
     bar.style.transform='scaleX(0)';
   });});
+}
+
+/* ========= version =========
+   Bump APP_VERSION whenever the file changes so James can confirm
+   which build he is running after an auto-update. */
+const APP_VERSION='1.14';
+const APP_DATE='2026-08-20';
+const CHANGELOG=[
+  ['1.14','Version tracking added — James can now tell you which build he is running.'],
+  ['1.13','Spotify now confirms uncertain matches instead of playing the wrong song; recovery for misheard speech.'],
+  ['1.12','Offline messages spoken aloud, day briefing, conversation continuity, repeat-that.'],
+  ['1.11','Wake sequence: chime, greeting, listen, escalate; snooze.'],
+  ['1.10','Memory and alarms.'],
+  ['1.9','Volume and brightness control with day/night presets.'],
+  ['1.8','Spotify queue, device switching, auto-pause on activation; greeting on wake.'],
+  ['1.7','Timers, auto-update, night mode.'],
+  ['1.6','Four themes, sine-wave option, night VFD clock.'],
+  ['1.5','Butler personality, barge-in interrupt.'],
+  ['1.4','ElevenLabs voice, streaming replies.'],
+  ['1.3','Reactive orb replaced the face.'],
+  ['1.2','Page system: clock, weather, Spotify, face.'],
+  ['1.1','Wake word and voice loop.'],
+  ['1.0','First build.']
+];
+function versionForPrompt(){
+  const recent=CHANGELOG.slice(0,3).map(c=>`v${c[0]}: ${c[1]}`).join(' ');
+  const fresh=justUpdated?(da()?' Du er netop blevet opdateret til denne version.':' You have just been updated to this version.'):'';
+  return fresh+(da()
+    ?`\nDIN SOFTWAREVERSION: ${APP_VERSION} (${APP_DATE}). Seneste ændringer — ${recent}`
+    :`\nYOUR SOFTWARE VERSION: ${APP_VERSION} (${APP_DATE}). Recent changes — ${recent}`);
 }
 
 /* ========= connectivity =========
@@ -1357,6 +1388,9 @@ async function ask(question){
     ?` VEJR ANDRE STEDER: Hvis brugeren spørger om vejret et andet sted end ${cfg.city} (fx "hvordan er vejret i London?"), skal dit svar starte med [LOOKUP:bynavn] og INTET andet — så henter systemet vejret og spørger dig igen med data. Brug kun dette til andre byer, ikke til ${cfg.city}.`
     :` WEATHER ELSEWHERE: If the user asks about the weather somewhere other than ${cfg.city} (e.g. "what's the weather in London?"), reply with [LOOKUP:cityname] and NOTHING else — the system will fetch that weather and ask you again with the data. Only use this for other cities, never for ${cfg.city}.`)
     +(da()
+    ?` VERSION: Hvis brugeren spørger hvilken version du kører, hvad der er nyt, eller om du er blevet opdateret, så svar med versionsnummeret og kort hvad der er ændret — i din egen stil.`
+    :` VERSION: If the user asks what version you are running, what's new, or whether you have been updated, answer with the version number and briefly what changed — in your own style.`)
+    +(da()
     ?` UKLAR TALE: Hvis brugerens besked virker forvansket, ufuldstændig eller meningsløs (talegenkendelsen fejler ofte), så gæt ikke — bed kort om at få det gentaget, fx "Det fangede jeg ikke helt, hr." Hvis kun ét ord virker forkert, må du gerne gætte og bekræfte samtidig, fx "Marcel af Hers, mener De?"`
     :` UNCLEAR SPEECH: If the user's message looks garbled, cut off or nonsensical (speech recognition often fails), do not guess — briefly ask them to repeat, e.g. "I didn't quite catch that, sir." If only one word seems wrong, you may guess and confirm at once, e.g. "Marcel by Hers, do you mean?"`)
     +(da()
@@ -1384,7 +1418,7 @@ async function ask(question){
     ?`\nKlokken er lige nu ${new Date().toLocaleTimeString('da-DK',{hour:'2-digit',minute:'2-digit'})}.`
     :`\nThe current time is ${new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}.`)
     +(alarmJustRang?(da()?' VIGTIGT: Alarmen har lige ringet og brugeren svarede — det er vækning, ikke almindelig samtale.':' IMPORTANT: The alarm has just gone off and the user has responded — this is a wake-up, not an ordinary conversation.'):'')
-    +memoriesForPrompt()+alarmsForPrompt()+nowPlayingForPrompt()+devicesForPrompt()
+    +versionForPrompt()+memoriesForPrompt()+alarmsForPrompt()+nowPlayingForPrompt()+devicesForPrompt()
     +weatherSummaryForPrompt()
     +(da()?` Dagens dato: ${new Date().toLocaleDateString('da-DK')}.`:` Today's date: ${new Date().toLocaleDateString('en-GB')}.`);
   history.push({role:'user',content:question});
@@ -2277,6 +2311,8 @@ async function spotifySimpleCommand(cmd){
 
 /* ========= settings ========= */
 function openSettings(){
+  $('verNum').textContent=APP_VERSION;
+  $('verDate').textContent=APP_DATE;
   $('f-key').value=cfg.key;$('f-model').value=cfg.model;$('f-lang').value=cfg.lang;
   $('f-lat').value=cfg.lat;$('f-lon').value=cfg.lon;$('f-city').value=cfg.city;
   $('f-wxdur').value=cfg.wxDur;$('f-spid').value=cfg.spClientId;
@@ -2407,11 +2443,23 @@ async function checkForUpdate(){
     const tag=r.headers.get('etag')||r.headers.get('last-modified');
     if(!tag)return;
     if(versionSeen===null){versionSeen=tag;return;}
-    if(tag!==versionSeen)location.reload(true);
+    if(tag!==versionSeen){
+      try{store.set('just_updated','1');}catch(e){}
+      location.reload(true);
+    }
   }catch(e){}
 }
 setInterval(checkForUpdate,180000);   /* every 3 minutes */
 setTimeout(checkForUpdate,10000);
+
+/* note a completed auto-update so James can mention it when next woken */
+let justUpdated=false;
+try{
+  if(store.get('just_updated','')==='1'){
+    justUpdated=true;
+    if(window.localStorage)localStorage.removeItem('just_updated');else delete mem['just_updated'];
+  }
+}catch(e){}
 
 /* ========= boot ========= */
 /* single-instance guard: if the app is already open in another tab,
