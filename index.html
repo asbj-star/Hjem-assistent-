@@ -194,6 +194,17 @@ body.waves-on:not([data-theme="nightcall"]) #waveCanvas{opacity:.3}
 .wx-h .t{font-size:19px;font-weight:400}
 #w-timer{position:absolute;bottom:0;left:0;height:3px;background:var(--amber);width:100%;transform-origin:left}
 
+/* DEPARTURES */
+#page-transit{gap:18px}
+#tr-stop{color:var(--amber);letter-spacing:.28em;text-transform:uppercase;font-size:clamp(13px,2vw,20px)}
+#tr-list{display:flex;flex-direction:column;gap:8px;width:100%;max-width:900px;padding:0 5vw}
+.tr-row{display:flex;align-items:center;gap:16px;border:1px solid var(--line);border-radius:14px;padding:12px 18px}
+.tr-line{color:var(--amber);font-weight:600;font-size:clamp(16px,2.4vw,24px);min-width:3.2em}
+.tr-dir{flex:1;font-size:clamp(14px,2vw,20px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tr-time{font-size:clamp(16px,2.4vw,24px);font-variant-numeric:tabular-nums}
+.tr-time.late{color:#ff6b4a}
+#tr-timer{position:absolute;bottom:0;left:0;height:3px;background:var(--amber);width:100%;transform-origin:left}
+
 /* ALARM */
 #page-alarm{gap:10px}
 #a-label{color:var(--amber);letter-spacing:.3em;text-transform:uppercase;font-size:clamp(13px,1.8vw,17px)}
@@ -304,6 +315,13 @@ body.waves-on:not([data-theme="nightcall"]) #waveCanvas{opacity:.3}
   <div id="w-hours"></div>
   <div id="w-days"></div>
   <div id="w-timer"></div>
+</section>
+
+<!-- DEPARTURES -->
+<section class="page" id="page-transit">
+  <div id="tr-stop">—</div>
+  <div id="tr-list"></div>
+  <div id="tr-timer"></div>
 </section>
 
 <!-- ALARM -->
@@ -561,6 +579,8 @@ const cfg={
   get nightVol(){return parseInt(store.get('night_vol','35'));},
   get dayBright(){return parseInt(store.get('day_bright','100'));},
   get nightBright(){return parseInt(store.get('night_bright','55'));},
+  get rpBase(){return store.get('rp_base','https://www.rejseplanen.dk/api/');},
+  get rpProxy(){return store.get('rp_proxy','');},
   get alarmRingSecs(){return Math.max(3,parseInt(store.get('alarm_ring_secs','10')));},
   get alarmRepeatSecs(){return Math.max(5,parseInt(store.get('alarm_repeat_secs','30')));},
   get elKey(){return store.get('el_key','');},
@@ -696,6 +716,7 @@ function currentPage(){
   if(timerRinging) return 'timer';          /* a finished timer beats everything */
   if(conversationActive) return 'face';
   if(Date.now()<weatherUntil) return 'weather';
+  if(Date.now()<transitUntil) return 'transit';
   if(timerEnd&&timerRemaining()>0) return 'timer';
   if(spotifyPlaying) return 'spotify';
   return 'clock';
@@ -706,6 +727,32 @@ function render(){
   $('wakeDot').classList.toggle('on', wakeRunning && page==='clock');
 }
 setInterval(render,400);
+
+function showRoutePage(res){
+  if(res.error)return;
+  const modeWord=da()
+    ?{driving:'I BIL',cycling:'PÅ CYKEL',walking:'TIL FODS'}[res.mode]
+    :{driving:'BY CAR',cycling:'BY BICYCLE',walking:'ON FOOT'}[res.mode];
+  $('tr-stop').textContent=res.to+' · '+modeWord;
+  const el=$('tr-list');el.innerHTML='';
+  const mk=(label,value)=>{
+    const row=document.createElement('div');
+    row.className='tr-row';
+    row.innerHTML=`<div class="tr-dir">${esc(label)}</div><div class="tr-time">${esc(value)}</div>`;
+    el.appendChild(row);
+  };
+  mk(da()?'Afstand':'Distance',res.km.toFixed(0)+' km');
+  mk(da()?'Rejsetid':'Travel time',fmtMins(res.mins));
+  const dur=cfg.wxDur*1000;
+  transitUntil=Date.now()+dur;
+  const bar=$('tr-timer');
+  bar.style.transition='none';bar.style.transform='scaleX(1)';
+  requestAnimationFrame(()=>{requestAnimationFrame(()=>{
+    bar.style.transition=`transform ${dur}ms linear`;
+    bar.style.transform='scaleX(0)';
+  });});
+  render();
+}
 
 function showWeatherPage(){
   fetchWeather();
@@ -719,12 +766,61 @@ function showWeatherPage(){
   });});
 }
 
+/* ========= routing (OSRM — free, no key) =========
+   Resolves a destination name to coordinates via Open-Meteo geocoding,
+   then asks the public OSRM server for road distance and driving time.
+   Cycling/walking are derived from the same road distance. */
+const SPEEDS={cycling:16,walking:5};   /* km/h */
+async function geocodePlace(name){
+  const r=await fetch('https://geocoding-api.open-meteo.com/v1/search?count=1&name='+encodeURIComponent(name));
+  const d=await r.json();
+  const hit=d.results&&d.results[0];
+  if(!hit)throw new Error('not found');
+  return {lat:hit.latitude,lon:hit.longitude,name:hit.name+(hit.country?', '+hit.country:'')};
+}
+async function getRoute(dest,mode){
+  mode=(mode||'driving').toLowerCase();
+  try{
+    const to=await geocodePlace(dest);
+    const url=`https://router.project-osrm.org/route/v1/driving/${cfg.lon},${cfg.lat};${to.lon},${to.lat}?overview=false`;
+    const r=await fetch(url);
+    const d=await r.json();
+    if(!d.routes||!d.routes.length)throw new Error('no route');
+    const km=d.routes[0].distance/1000;
+    let mins;
+    if(mode==='driving')mins=d.routes[0].duration/60;
+    else mins=(km/(SPEEDS[mode]||SPEEDS.cycling))*60;
+    return {to:to.name,km,mins,mode};
+  }catch(e){
+    console.error(e);
+    return {error:(da()?`Jeg kunne ikke finde en rute til ${dest}.`:`I could not find a route to ${dest}.`)};
+  }
+}
+function fmtMins(m){
+  m=Math.round(m);
+  const h=Math.floor(m/60),mm=m%60;
+  if(h&&mm)return da()?`${h} t. ${mm} min.`:`${h} h ${mm} min`;
+  if(h)return da()?`${h} timer`:`${h} h`;
+  return da()?`${mm} min.`:`${mm} min`;
+}
+function routeForSpeech(res){
+  if(res.error)return res.error;
+  const modeWord=da()
+    ?{driving:'i bil',cycling:'på cykel',walking:'til fods'}[res.mode]
+    :{driving:'by car',cycling:'by bicycle',walking:'on foot'}[res.mode];
+  return (da()
+    ?`Til ${res.to}: ${res.km.toFixed(0)} kilometer, omkring ${fmtMins(res.mins)} ${modeWord}.`
+    :`To ${res.to}: ${res.km.toFixed(0)} kilometres, about ${fmtMins(res.mins)} ${modeWord}.`);
+}
+
 /* ========= version =========
    Bump APP_VERSION whenever the file changes so James can confirm
    which build he is running after an auto-update. */
-const APP_VERSION='1.14';
+const APP_VERSION='1.17';
 const APP_DATE='2026-08-20';
 const CHANGELOG=[
+  ['1.17','Distance and travel time to anywhere, by car, bike or on foot.'],
+  ['1.15','Farewells now suit the time of day.'],
   ['1.14','Version tracking added — James can now tell you which build he is running.'],
   ['1.13','Spotify now confirms uncertain matches instead of playing the wrong song; recovery for misheard speech.'],
   ['1.12','Offline messages spoken aloud, day briefing, conversation continuity, repeat-that.'],
@@ -1385,6 +1481,9 @@ async function ask(question){
     ?` MUSIKBEKRÆFTELSE: Hvis systemet har spurgt hvilken sang der menes, og brugeren bekræfter den første ("ja", "den er rigtig"), svarer du kun med [CONFIRM]. Vælger brugeren nummer 2 eller 3, svarer du kun med [PICK:2] eller [PICK:3]. Nævner brugeren en anden sang, brug [PLAY:...] igen. MUSIK: Du kan styre Spotify. Afspil noget: [PLAY:søgetekst]. Playliste: [PLAYLIST:navn]. Sæt i kø (uden at afbryde nuværende sang): [QUEUE:søgetekst] — brug denne når brugeren siger "sæt X i kø", "spil X bagefter" eller "tilføj X". Skift afspilningsenhed: [DEVICE:navn] — fx [DEVICE:telefon] eller [DEVICE:computer]. Simple kommandoer: [MUSIC:pause], [MUSIC:resume], [MUSIC:next], [MUSIC:prev]. Efter tokenet skriver du en kort naturlig bekræftelse. Brug aldrig musik-tokens hvis brugeren blot spørger hvad der spiller.`
     :` MUSIC CONFIRMATION: If the system has asked which song was meant and the user confirms the first ("yes", "that's the one"), reply with only [CONFIRM]. If they pick number 2 or 3, reply with only [PICK:2] or [PICK:3]. If they name something different, use [PLAY:...] again. MUSIC: You can control Spotify. Play something: [PLAY:search text]. Playlist: [PLAYLIST:name]. Add to queue without interrupting the current song: [QUEUE:search text] — use this when the user says "queue X", "play X next" or "add X". Switch playback device: [DEVICE:name] — e.g. [DEVICE:phone] or [DEVICE:computer]. Simple commands: [MUSIC:pause], [MUSIC:resume], [MUSIC:next], [MUSIC:prev]. Follow the token with a short natural confirmation. Never use music tokens if the user is merely asking what is playing.`)
     +(da()
+    ?` AFSTANDE OG REJSETID: Du kan beregne afstand og rejsetid fra brugerens position (${cfg.city}) til et hvilket som helst sted. Hvis brugeren spørger "hvor langt er der til Aarhus?", "hvor lang tid tager det at køre til Skagen?", "hvor langt på cykel til X?", svar med [ROUTE:stednavn:transportform] og intet andet. Transportform er driving, cycling eller walking — brug driving hvis intet nævnes. Systemet henter data og spørger dig igen. For tog eller offentlig transport har du ikke live-data — svar da ud fra almen viden og gør klart at det er et cirka-tal.`
+    :` DISTANCE AND TRAVEL TIME: You can work out distance and travel time from the user's location (${cfg.city}) to anywhere. If the user asks "how far is it to Aarhus?", "how long to drive to Skagen?", "how far by bike to X?", reply with [ROUTE:place name:mode] and nothing else. Mode is driving, cycling or walking — use driving when unstated. The system fetches the data and asks you again. For trains or public transport you have no live data — answer from general knowledge instead and make clear it is approximate.`)
+    +(da()
     ?` VEJR ANDRE STEDER: Hvis brugeren spørger om vejret et andet sted end ${cfg.city} (fx "hvordan er vejret i London?"), skal dit svar starte med [LOOKUP:bynavn] og INTET andet — så henter systemet vejret og spørger dig igen med data. Brug kun dette til andre byer, ikke til ${cfg.city}.`
     :` WEATHER ELSEWHERE: If the user asks about the weather somewhere other than ${cfg.city} (e.g. "what's the weather in London?"), reply with [LOOKUP:cityname] and NOTHING else — the system will fetch that weather and ask you again with the data. Only use this for other cities, never for ${cfg.city}.`)
     +(da()
@@ -1412,8 +1511,8 @@ async function ask(question){
     ?` TIMER: Du kan sætte en timer. Hvis brugeren beder om det (fx "sæt en timer på ti minutter", "kald mig om et kvarter"), skal svaret starte med [TIMER:sekunder:etiket] — fx [TIMER:600:æg] eller [TIMER:900:] hvis der ingen etiket er. Hvis brugeren vil annullere, brug [TIMER:cancel:]. Efter tokenet siger du en kort bekræftelse.`
     :` TIMER: You can set a timer. If the user asks (e.g. "set a timer for ten minutes", "remind me in a quarter of an hour"), start your reply with [TIMER:seconds:label] — e.g. [TIMER:600:eggs] or [TIMER:900:] when there is no label. To cancel, use [TIMER:cancel:]. Follow the token with a short confirmation.`)
     +(da()
-    ?` AFSLUTNING: Hvis brugeren indikerer at samtalen er slut (fx "det var det", "tak", "godnat", "nej tak", "ikke mere"), skal svaret starte med tokenet [END] efterfulgt af en meget kort afsked (fx "Udmærket, hr."). `
-    :` ENDING: If the user indicates the conversation is over (e.g. "that's it", "thank you", "goodnight", "no thanks", "nothing else"), start your reply with the token [END] followed by a very brief farewell (e.g. "Very good, sir."). `)
+    ?` AFSLUTNING: Hvis brugeren indikerer at samtalen er slut (fx "det var det", "tak", "godnat", "nej tak", "ikke mere"), skal svaret starte med tokenet [END] efterfulgt af en meget kort afsked. Tilpas afskeden til tidspunktet på dagen og varier den — tidlig morgen: ønsk en god start på dagen; formiddag/eftermiddag: en god dag eller held og lykke med arbejdet; aften: en behagelig aften; sent om aftenen eller nat: ønsk godnat og en god søvn. Gentag ikke den samme afsked hver gang. `
+    :` ENDING: If the user indicates the conversation is over (e.g. "that's it", "thank you", "goodnight", "no thanks", "nothing else"), start your reply with the token [END] followed by a very brief farewell. Tailor the farewell to the time of day and vary it — early morning: wish them a good start to the day; midday/afternoon: a good day or luck with their work; evening: a pleasant evening; late night: wish them goodnight and a good rest. Never repeat the same farewell every time. `)
     +(da()
     ?`\nKlokken er lige nu ${new Date().toLocaleTimeString('da-DK',{hour:'2-digit',minute:'2-digit'})}.`
     :`\nThe current time is ${new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}.`)
@@ -1462,6 +1561,7 @@ async function streamAsk(sys,headers,model){
   let playing=false,streamDone=false,finished=false;
   let weatherTriggered=false,buffer='',leading=true;
   let musicGate=null,suppressText=false,endAfter=false,lookupCity=null,repeatRequested=false;
+  let routeReq=null;
   let playReq=null;
   pipeActive=true;pipeSpoken='';pipePushed=false;collectingBlobs=[];
 
@@ -1520,6 +1620,7 @@ async function streamAsk(sys,headers,model){
       else if(/^\[WEATHER\]$/i.test(tok)){weatherTriggered=true;conversationActive=false;showWeatherPage();render();}
       else if(/^\[END\]$/i.test(tok))endAfter=true;
       else if(m=tok.match(/^\[LOOKUP:([^\]]+)\]$/i)){lookupCity=m[1].trim();suppressText=true;}
+      else if(m=tok.match(/^\[ROUTE:([^:\]]+):?([a-z]*)\]$/i)){routeReq={dest:m[1].trim(),mode:(m[2]||'driving').toLowerCase()};suppressText=true;}
       else if(m=tok.match(/^\[TIMER:([^:\]]*):([^\]]*)\]$/i)){
         if(/^cancel$/i.test(m[1]))cancelTimer();
         else{const secs=parseInt(m[1]);if(secs>0)startTimer(secs,m[2].trim());}
@@ -1598,6 +1699,17 @@ async function streamAsk(sys,headers,model){
     if(musicGate&&!q.length&&!playing){
       const err=await musicGate;musicGate=null;
       if(err){pipeSpoken=err;await speakChunk({text:err,blobP:cfg.elKey?elevenFetch(err):null},myGen);}
+    }
+    if(routeReq){
+      pipeActive=false;pipePushed=true;
+      history.pop();
+      const res=await getRoute(routeReq.dest,routeReq.mode);
+      showRoutePage(res);
+      history.push({role:'user',content:(da()
+        ?`[System: ${routeForSpeech(res)} Formidl det naturligt i din stil. Ingen tokens.]`
+        :`[System: ${routeForSpeech(res)} Convey this naturally in your own style. No tokens.]`)});
+      await streamAsk(sys,headers,model);
+      return;
     }
     if(playReq){
       pipeActive=false;pipePushed=true;
@@ -2317,6 +2429,7 @@ function openSettings(){
   $('f-lat').value=cfg.lat;$('f-lon').value=cfg.lon;$('f-city').value=cfg.city;
   $('f-wxdur').value=cfg.wxDur;$('f-spid').value=cfg.spClientId;
   $('f-elkey').value=cfg.elKey;$('f-elvoice').value=cfg.elVoice;
+  $('f-rpbase').value=cfg.rpBase;$('f-rpproxy').value=cfg.rpProxy;
   $('f-theme').value=cfg.theme;
   $('f-waves').checked=cfg.wavesOn;
   $('f-night').checked=cfg.nightOn;
@@ -2365,6 +2478,10 @@ $('saveSet').addEventListener('click',()=>{
   volOverride=null;brightOverride=null;syncOutputLevels();
   nightActive=!nightActive;syncNight();
 syncOutputLevels();   /* force re-evaluation */
+  store.set('rp_key',$('f-rpkey').value.trim());
+  store.set('rp_stop',$('f-rpstop').value.trim());
+  store.set('rp_base',$('f-rpbase').value.trim()||'https://www.rejseplanen.dk/api/');
+  store.set('rp_proxy',$('f-rpproxy').value.trim());
   store.set('el_key',$('f-elkey').value.trim());
   store.set('el_voice',$('f-elvoice').value.trim()||'21m00Tcm4TlvDq8ikWAM');
   store.set('sp_client_id',$('f-spid').value.trim());
