@@ -579,8 +579,6 @@ const cfg={
   get nightVol(){return parseInt(store.get('night_vol','35'));},
   get dayBright(){return parseInt(store.get('day_bright','100'));},
   get nightBright(){return parseInt(store.get('night_bright','55'));},
-  get rpBase(){return store.get('rp_base','https://www.rejseplanen.dk/api/');},
-  get rpProxy(){return store.get('rp_proxy','');},
   get alarmRingSecs(){return Math.max(3,parseInt(store.get('alarm_ring_secs','10')));},
   get alarmRepeatSecs(){return Math.max(5,parseInt(store.get('alarm_repeat_secs','30')));},
   get elKey(){return store.get('el_key','');},
@@ -709,6 +707,7 @@ function esc(s){return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;
    ========================================================= */
 let conversationActive=false;
 let weatherUntil=0;
+let routeUntil=0;
 let spotifyPlaying=false;
 
 function currentPage(){
@@ -716,7 +715,7 @@ function currentPage(){
   if(timerRinging) return 'timer';          /* a finished timer beats everything */
   if(conversationActive) return 'face';
   if(Date.now()<weatherUntil) return 'weather';
-  if(Date.now()<transitUntil) return 'transit';
+  if(Date.now()<routeUntil) return 'transit';
   if(timerEnd&&timerRemaining()>0) return 'timer';
   if(spotifyPlaying) return 'spotify';
   return 'clock';
@@ -727,6 +726,25 @@ function render(){
   $('wakeDot').classList.toggle('on', wakeRunning && page==='clock');
 }
 setInterval(render,400);
+
+/* ---- watchdog: never stay stuck in the activated state ----
+   If a conversation has been open for too long without reaching a
+   normal end (a thrown error, a dead listener), force it closed. */
+let convStartedAt=0;
+setInterval(()=>{
+  if(!conversationActive){convStartedAt=0;return;}
+  if(!convStartedAt)convStartedAt=Date.now();
+  const stuckFor=Date.now()-convStartedAt;
+  /* speaking can legitimately run long (stories); listening/thinking cannot */
+  const limit=(state==='speaking')?180000:45000;
+  if(stuckFor>limit){
+    console.warn('watchdog: forcing conversation closed');
+    try{endConversation();}catch(e){
+      conversationActive=false;setState('idle');render();
+    }
+    convStartedAt=0;
+  }
+},5000);
 
 function showRoutePage(res){
   if(res.error)return;
@@ -744,7 +762,7 @@ function showRoutePage(res){
   mk(da()?'Afstand':'Distance',res.km.toFixed(0)+' km');
   mk(da()?'Rejsetid':'Travel time',fmtMins(res.mins));
   const dur=cfg.wxDur*1000;
-  transitUntil=Date.now()+dur;
+  routeUntil=Date.now()+dur;
   const bar=$('tr-timer');
   bar.style.transition='none';bar.style.transform='scaleX(1)';
   requestAnimationFrame(()=>{requestAnimationFrame(()=>{
@@ -816,9 +834,11 @@ function routeForSpeech(res){
 /* ========= version =========
    Bump APP_VERSION whenever the file changes so James can confirm
    which build he is running after an auto-update. */
-const APP_VERSION='1.17';
+const APP_VERSION='1.19';
 const APP_DATE='2026-08-20';
 const CHANGELOG=[
+  ['1.19','Fixed the remaining crash from the removed transit feature.'],
+  ['1.18','Fixed a freeze caused by leftover settings code; added crash recovery.'],
   ['1.17','Distance and travel time to anywhere, by car, bike or on foot.'],
   ['1.15','Farewells now suit the time of day.'],
   ['1.14','Version tracking added — James can now tell you which build he is running.'],
@@ -1189,6 +1209,7 @@ function setFaceMode(mode){ /* 'listen' | 'think' | 'speak' | 'idle' */
 let state='idle';
 function setState(s){
   state=s;
+  convStartedAt=Date.now();   /* progress made — restart the watchdog clock */
   $('page-face').classList.toggle('listening',s==='listening');
   const L={listening:da()?'Lytter…':'Listening…',thinking:da()?'Tænker…':'Thinking…',speaking:da()?'Taler':'Speaking'};
   $('stateLabel').textContent=L[s]||'';
@@ -2429,7 +2450,6 @@ function openSettings(){
   $('f-lat').value=cfg.lat;$('f-lon').value=cfg.lon;$('f-city').value=cfg.city;
   $('f-wxdur').value=cfg.wxDur;$('f-spid').value=cfg.spClientId;
   $('f-elkey').value=cfg.elKey;$('f-elvoice').value=cfg.elVoice;
-  $('f-rpbase').value=cfg.rpBase;$('f-rpproxy').value=cfg.rpProxy;
   $('f-theme').value=cfg.theme;
   $('f-waves').checked=cfg.wavesOn;
   $('f-night').checked=cfg.nightOn;
@@ -2478,10 +2498,6 @@ $('saveSet').addEventListener('click',()=>{
   volOverride=null;brightOverride=null;syncOutputLevels();
   nightActive=!nightActive;syncNight();
 syncOutputLevels();   /* force re-evaluation */
-  store.set('rp_key',$('f-rpkey').value.trim());
-  store.set('rp_stop',$('f-rpstop').value.trim());
-  store.set('rp_base',$('f-rpbase').value.trim()||'https://www.rejseplanen.dk/api/');
-  store.set('rp_proxy',$('f-rpproxy').value.trim());
   store.set('el_key',$('f-elkey').value.trim());
   store.set('el_voice',$('f-elvoice').value.trim()||'21m00Tcm4TlvDq8ikWAM');
   store.set('sp_client_id',$('f-spid').value.trim());
@@ -2578,6 +2594,19 @@ try{
   }
 }catch(e){}
 
+/* ---- last-resort guard: a script error must never blank the screen ---- */
+addEventListener('error',ev=>{
+  console.error('caught:',ev.message);
+  try{
+    conversationActive=false;
+    if(!document.querySelector('.page.on'))render();
+  }catch(e){}
+});
+addEventListener('unhandledrejection',ev=>{
+  console.error('unhandled promise:',ev.reason);
+  try{if(conversationActive&&state==='idle'){conversationActive=false;render();}}catch(e){}
+});
+
 /* ========= boot ========= */
 /* single-instance guard: if the app is already open in another tab,
    this tab disables its voice features so they can't fight over the mic */
@@ -2592,10 +2621,12 @@ if(navigator.locks){
     return new Promise(()=>{});   /* hold the lock for this tab's lifetime */
   });
 }
-applyTheme(cfg.theme);
-applyWaves(cfg.wavesOn);
-syncNight();
-syncOutputLevels();
+try{
+  applyTheme(cfg.theme);
+  applyWaves(cfg.wavesOn);
+  syncNight();
+  syncOutputLevels();
+}catch(e){console.error('boot styling failed',e);}
 wakeWanted=cfg.wakeOn;
 updateWakeBtn();
 $('wakeDotLabel').textContent=(da()?'Lytter efter “hej ':'Listening for “hey ')+cfg.name+'”';
